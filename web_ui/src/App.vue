@@ -6,7 +6,7 @@
         <div class="logo">
           <img :src="logo" alt="avatar" :width="60" style="margin-right:1rem;">
           <router-link to="/">{{ appTitle }}</router-link>
-          <a-tooltip v-if="hasLogined" :content="!haswxLogined ? '未授权，请扫码登录' : '点我扫码授权'" position="bottom">
+          <a-tooltip v-if="hasLogined" :content="!haswxLogined ? '未授权，请扫码登录' : '点我扫码授权'" position="bottom" :default-popup="!haswxLogined">
             <icon-scan @click="showAuthQrcode()" :style="{ marginLeft: '10px', cursor: 'pointer', color: !haswxLogined ? '#f00' : '#000' }"/>
           </a-tooltip>
         </div>
@@ -181,7 +181,7 @@
             </a-doption>
           </template>
         </a-dropdown>
-        <WechatAuthQrcode ref="qrcodeRef" />
+        <WechatAuthQrcode ref="qrcodeRef" @success="handleQrAuthSuccess" />
         <a-modal v-model:visible="sponsorVisible" title="感谢支持" :footer="false" :style="{ zIndex: 1000 }" unmount-on-close>
           <div style="text-align: center;">
             <p>如果您觉得这个项目对您有帮助,请给Rachel来一杯Coffee吧~ </p>
@@ -238,6 +238,11 @@ import WechatAuthQrcode from '@/components/WechatAuthQrcode.vue'
 const qrcodeRef = ref()
 const showAuthQrcode = () => {
   qrcodeRef.value?.startAuth()
+}
+
+const handleQrAuthSuccess = () => {
+  haswxLogined.value = true
+  Message.success('微信授权成功')
 }
 provide('showAuthQrcode', showAuthQrcode)
 const appTitle = computed(() => import.meta.env.VITE_APP_TITLE || '微信公众号订阅助手')

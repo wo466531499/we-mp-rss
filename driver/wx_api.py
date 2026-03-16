@@ -24,6 +24,7 @@ from sqlalchemy import true
 
 from core.print import print_warning,print_success
 from .token import get as get_token,set_token
+import psutil
 import logging
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -911,24 +912,94 @@ class WeChatAPI:
         if os.path.exists(self.wx_login_url):
             return True
         return False
-    def check_lock(self):
-        """检查锁定状态"""
-        time.sleep(1)
-        return os.path.exists(self.lock_file_path) or self.GetHasCode()
+    def check_lock(self, timeout: int = 300) -> bool:
+        """
+        检查锁定状态
+        
+        Args:
+            timeout: 锁超时时间(秒)，默认5分钟
+            
+        Returns:
+            True 表示有有效的锁存在，False 表示无锁或锁已过期
+        """
+        # 检查锁文件是否存在
+        if not os.path.exists(self.lock_file_path):
+            return False
+            
+        try:
+            with open(self.lock_file_path, 'r') as f:
+                content = f.read().strip()
+            
+            # 解析锁文件内容: 格式为 "PID|timestamp"
+            parts = content.split('|')
+            if len(parts) >= 2:
+                lock_pid = int(parts[0])
+                lock_time = float(parts[1])
+            else:
+                # 旧格式兼容：只有时间戳
+                lock_pid = None
+                lock_time = float(content)
+            
+            current_pid = os.getpid()
+            
+            # 如果是当前进程持有的锁，不算锁定
+            if lock_pid == current_pid:
+                return False
+            
+            # 检查锁是否超时
+            if time.time() - lock_time > timeout:
+                # 锁已过期，清理
+                self._force_release_lock()
+                return False
+            
+            # 检查持有锁的进程是否还在运行
+            if lock_pid is not None:
+                try:
+                    if not psutil.pid_exists(lock_pid):
+                        # 进程已退出，清理锁
+                        self._force_release_lock()
+                        return False
+                except Exception:
+                    pass
+            
+            # 存在有效的锁
+            return True
+            
+        except (ValueError, IOError) as e:
+            # 锁文件损坏，清理
+            self._force_release_lock()
+            return False
+    
     def set_lock(self):
-        """创建锁定文件"""
+        """创建锁定文件，写入当前进程PID和时间戳"""
+        os.makedirs(os.path.dirname(self.lock_file_path), exist_ok=True)
+        current_pid = os.getpid()
         with open(self.lock_file_path, 'w') as f:
-            f.write(str(time.time()))
+            f.write(f"{current_pid}|{time.time()}")
         self.isLOCK = True
         
     def release_lock(self):
         """删除锁定文件"""
         try:
-            os.remove(self.lock_file_path)
+            # 只释放当前进程持有的锁
+            if os.path.exists(self.lock_file_path):
+                with open(self.lock_file_path, 'r') as f:
+                    content = f.read().strip()
+                parts = content.split('|')
+                if parts and int(parts[0]) == os.getpid():
+                    os.remove(self.lock_file_path)
             self.isLOCK = False
             return True
-        except:
+        except Exception:
             return False
+    
+    def _force_release_lock(self):
+        """强制释放锁（用于清理过期或损坏的锁）"""
+        try:
+            if os.path.exists(self.lock_file_path):
+                os.remove(self.lock_file_path)
+        except Exception:
+            pass
     def QrStatus(self):
         return {"login_status":self.HasLogin(),"qr_code":self.GetHasCode()}
     def HasLogin(self):
