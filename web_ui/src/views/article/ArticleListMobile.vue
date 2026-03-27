@@ -149,7 +149,18 @@
     :fullscreen="false"
   >
     <div style="padding: 20px; overflow-y: auto;clear:both;">
-      <div><h2 id="topreader">{{currentArticle.title}}</h2></div>
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <h2 id="topreader" style="flex: 1; margin: 0;">{{currentArticle.title}}</h2>
+        <div
+          @click="toggleDetailFavorite"
+          class="favorite-icon"
+          :class="{ 'favorited': currentArticle.is_favorite === 1 }"
+          style="font-size: 24px;"
+        >
+          <icon-star-fill v-if="currentArticle.is_favorite === 1" />
+          <icon-star v-else />
+        </div>
+      </div>
         <div style="margin-top: 20px; color: var(--color-text-3); text-align: left;position:fixed;left:40%;top:-3px;">
         <a-link @click="viewArticle(currentArticle,-1)" target="_blank">上一篇 </a-link>
         <a-space/>
@@ -288,7 +299,9 @@ const viewArticle = async (record: any,action_type: number) => {
       title: article.title,
       content: processedContent(article),
       time: formatDateTime(article.created_at),
-      url: article.url
+      url: article.url,
+      is_favorite: article.is_favorite ?? record.is_favorite ?? 0,
+      is_read: article.is_read ?? record.is_read ?? 0
     }
     articleModalVisible.value = true
     window.location="#topreader"
@@ -310,7 +323,9 @@ const currentArticle = ref({
   title: '',
   content: '',
   time: '',
-  url: ''
+  url: '',
+  is_favorite: 0,
+  is_read: 0
 })
 
 const articleModalVisible = ref(false)
@@ -461,6 +476,28 @@ const toggleFavoriteStatus = async (record: any) => {
 
     // 更新本地数据
     const index = articles.value.findIndex(item => item.id === record.id);
+    if (index !== -1) {
+      articles.value[index].is_favorite = newFavoriteStatus ? 1 : 0;
+    }
+
+    Message.success(`文章已${newFavoriteStatus ? '收藏' : '取消收藏'}`);
+  } catch (error) {
+    console.error('更新收藏状态失败:', error);
+    Message.error('更新收藏状态失败');
+  }
+};
+
+// 在详情弹窗中切换收藏状态
+const toggleDetailFavorite = async () => {
+  try {
+    const newFavoriteStatus = currentArticle.value.is_favorite === 1 ? false : true;
+    await toggleArticleFavoriteStatus(currentArticle.value.id, newFavoriteStatus);
+
+    // 更新详情弹窗中的状态
+    currentArticle.value.is_favorite = newFavoriteStatus ? 1 : 0;
+
+    // 同步更新列表中的状态
+    const index = articles.value.findIndex(item => item.id === currentArticle.value.id);
     if (index !== -1) {
       articles.value[index].is_favorite = newFavoriteStatus ? 1 : 0;
     }
