@@ -72,6 +72,8 @@ A tool for subscribing to and managing WeChat Official Account content, providin
 - Export to md/docx/pdf/json formats
 - API interface and WebHook support
 - HTML content filtering rules (global rules and MP-specific rules)
+- Multi-theme support (13 themes: Default Purple, Blue, Green, Orange, Rose, Teal, Pink, Indigo, Violet, Coffee, Navy, Dark Mode, Sepia)
+- Responsive pagination (PC: click navigation, Mobile: load more button)
 
 
 # ❤️ Sponsorship
