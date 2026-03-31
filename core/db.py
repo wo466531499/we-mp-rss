@@ -186,8 +186,27 @@ class Db:
             
             if check_exist:
                 # 检查文章是否已存在
-                existing_article = session.query(Article).filter(Article.url == art.url or Article.id == art.id).first()
+                existing_article = session.query(Article).filter(
+                    (Article.url == art.url) | (Article.id == art.id)
+                ).first()
                 if existing_article is not None:
+                    # 检查时间戳是否更新
+                    existing_ts = existing_article.publish_time
+                    new_ts = art.publish_time
+                    if new_ts and existing_ts and new_ts > existing_ts:
+                        # 更新文章内容
+                        existing_article.publish_time = art.publish_time
+                        if art.content and not existing_article.content:
+                            existing_article.content = art.content
+                        if art.content_html and not existing_article.content_html:
+                            existing_article.content_html = art.content_html
+                        if art.title and not existing_article.title:
+                            existing_article.title = art.title
+                        if art.updated_at:
+                            existing_article.updated_at = art.updated_at
+                        session.commit()
+                        print_info(f"Updated article (CHECK_EXIST): {art.id} (newer publish_time)")
+                        return True
                     print_warning(f"Article already exists: {art.id}")
                     return False
                 
@@ -213,6 +232,27 @@ class Db:
             
         except Exception as e:
             if "UNIQUE" in str(e) or "Duplicate entry" in str(e):
+                # 检查时间戳是否更新
+                existing_article = session.query(Article).filter(
+                    (Article.url == art.url) | (Article.id == art.id)
+                ).first()
+                if existing_article is not None:
+                    existing_ts = existing_article.publish_time
+                    new_ts = art.publish_time
+                    if new_ts and existing_ts and new_ts > existing_ts:
+                        # 更新文章内容
+                        existing_article.publish_time = art.publish_time
+                        if art.content and not existing_article.content:
+                            existing_article.content = art.content
+                        if art.content_html and not existing_article.content_html:
+                            existing_article.content_html = art.content_html
+                        if art.title and not existing_article.title:
+                            existing_article.title = art.title
+                        if art.updated_at:
+                            existing_article.updated_at = art.updated_at
+                        session.commit()
+                        print_info(f"Updated article (UNIQUE): {art.id} (newer publish_time)")
+                        return True
                 print_warning(f"Article already exists: {art.id}")
             else:
                 print_error(f"Failed to add article: {e}")
