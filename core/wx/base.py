@@ -198,7 +198,8 @@ class WxGather:
                     "publish_src":data.get("publish_src",0),
                     "publish_src":data.get("publish_src",0),
                     "publish_status":data.get("publish_status","200"),
-                    "publish_time":data['update_time'],
+                    "create_time":data.get("create_time",""),
+                    "publish_time":data.get("update_time",""),
                     "status": DATA_STATUS.DELETED if data.get("is_deleted",False) else DATA_STATUS.ACTIVE,
                 }
                 if 'digest' in data:

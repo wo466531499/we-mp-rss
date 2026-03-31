@@ -114,14 +114,14 @@ class Db:
             pass      
         return False
      
-    def add_article(self, article_data: dict,check_exist=False) -> bool:
+    def add_article(self, article_data: dict,check_exist=True) -> bool:
         try:
             session=self.get_session()
             from datetime import datetime
             art = Article(**article_data)
             if art.id: # type: ignore
                art.id=f"{str(art.mp_id)}-{art.id}".replace("MP_WXS_","") # type: ignore
-            
+            existing_article = None
             if check_exist:
                 # 检查文章是否已存在
                 existing_article = session.query(Article).filter(
