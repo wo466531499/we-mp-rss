@@ -270,7 +270,7 @@
 <script setup lang="ts">
 import { Avatar } from '@/utils/constants'
 import { translatePage, setCurrentLanguage } from '@/utils/translate';
-import { ref, onMounted, h, nextTick, watch, computed } from 'vue'
+import { ref, onMounted, h, nextTick, watch, computed, resolveComponent } from 'vue'
 import axios from 'axios'
 import { IconApps, IconAtt, IconDelete, IconEdit, IconEye, IconRefresh, IconScan, IconWeiboCircleFill, IconWifi, IconCode, IconCheck, IconClose, IconStop, IconPlayArrow, IconCopy, IconPlus, IconDown, IconExport, IconImport, IconShareExternal, IconStar, IconStarFill, IconLink, IconSettings } from '@arco-design/web-vue/es/icon'
 import { getArticles, deleteArticle as deleteArticleApi, ClearArticle, ClearDuplicateArticle, getArticleDetail, getRefreshArticleTaskStatus, refreshArticle as refreshArticleApi, toggleArticleFavoriteStatus, toggleArticleReadStatus } from '@/api/article'
@@ -466,16 +466,31 @@ const columns = computed(() => {
       align: 'center',
       render: ({ record }) => {
         if (!record.pic_url) return h('span', { style: { color: 'var(--color-text-4)' } }, '-')
-        return h('img', {
-          src: record.pic_url,
-          style: {
-            width: '60px',
-            height: '40px',
-            objectFit: 'cover',
-            borderRadius: '4px',
-            cursor: 'pointer'
-          },
-          onClick: () => viewArticle(record)
+        const Popover = resolveComponent('a-popover')
+        return h(Popover, {
+          trigger: 'hover',
+          position: 'right',
+          'content-style': { padding: '4px' }
+        }, {
+          default: () => h('img', {
+            src: record.pic_url,
+            style: {
+              width: '60px',
+              height: '40px',
+              objectFit: 'cover',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            },
+            onClick: () => viewArticle(record)
+          }),
+          content: () => h('img', {
+            src: record.pic_url,
+            style: {
+              maxWidth: '300px',
+              maxHeight: '200px',
+              borderRadius: '4px'
+            }
+          })
         })
       }
     },
@@ -1406,6 +1421,17 @@ const toggleFavoriteStatus = async (record: any) => {
 
 :deep(.arco-dropdown-open .arco-icon-down) {
   transform: rotate(180deg);
+}
+
+/* 题图预览 tooltip 样式 */
+:deep(.image-preview-tooltip) {
+  padding: 4px !important;
+  background: transparent !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+}
+
+:deep(.arco-tooltip-content) {
+  background: transparent !important;
 }
 
 </style>
