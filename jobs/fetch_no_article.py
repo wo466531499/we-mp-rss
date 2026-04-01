@@ -64,7 +64,10 @@ def fetch_articles_without_content():
                 session.commit()
                 print_error(f"处理文章 {article.title} 时发生错误: {e}")
     except Exception as e:
-        print(f"处理过程中发生错误: {e}")
+        print_error(f"处理过程中发生错误: {e}")
+        raise  # 重新抛出异常，让队列记录错误
+    finally:
+        session.close()
 from core.task import TaskScheduler
 from core.queue import TaskQueue
 scheduler=TaskScheduler()
