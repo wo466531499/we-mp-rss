@@ -8,10 +8,19 @@ import random
 import uuid
 import asyncio
 import threading
+import warnings
+import gc
 from socket import timeout
 from urllib.parse import urlparse, unquote
 
 from core.print import print_error
+
+# 过滤 Playwright 已知的 memoryview 缓冲区警告
+# 这是 Playwright 在 Windows 上关闭浏览器时的已知问题
+try:
+    warnings.filterwarnings("ignore", category=ResourceWarning)
+except Exception:
+    pass
 
 # 设置环境变量
 browsers_name = os.getenv("BROWSER_TYPE", "firefox")
@@ -503,12 +512,17 @@ class PlaywrightController:
 
     def cleanup(self):
         """清理所有资源 - 每个步骤独立捕获异常"""
+        import gc
         errors = []
+        
         # 先清理实例级别的资源
         for name, obj in [('page', self.page), ('context', self.context), 
                            ('browser', self.browser)]:
             if obj:
                 try:
+                    # 添加小延迟，避免 memoryview 缓冲区问题
+                    import time
+                    time.sleep(0.1)
                     obj.close()
                 except Exception as e:
                     errors.append(f"{name}: {e}")
@@ -517,6 +531,9 @@ class PlaywrightController:
         self.context = None
         self.browser = None
         self.isClose = True
+        
+        # 强制垃圾回收，释放可能的内存缓冲区
+        gc.collect()
         
         # 使用全局锁管理线程本地 driver 的生命周期
         thread_id = threading.current_thread().ident
@@ -530,6 +547,8 @@ class PlaywrightController:
                     if hasattr(PlaywrightController._thread_local, 'driver') and \
                        PlaywrightController._thread_local.driver is not None:
                         try:
+                            import time
+                            time.sleep(0.2)  # 延迟停止 driver
                             PlaywrightController._thread_local.driver.stop()
                             print(f"Playwright driver 已为线程 {thread_id} 停止")
                         except Exception as e:
@@ -539,6 +558,9 @@ class PlaywrightController:
                     del PlaywrightController._thread_ref_counts[thread_id]
         
         self.driver = None
+        # 再次强制垃圾回收
+        gc.collect()
+        
         if errors:
             print(f"资源清理部分失败: {errors}")
 

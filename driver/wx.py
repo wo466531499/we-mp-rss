@@ -219,6 +219,8 @@ class Wx:
                                     exp_time="-"
                                     token="-"
                                     pass
+                                # 添加延迟，避免 Playwright memoryview 缓冲区问题
+                                time.sleep(0.5)
                                 self.Close()
                                 sys_notice(f"账号切换成功\n- 账号名称: {account_name} \n- 账号ID: {account_id} \n - Token: {token} \n- 过期时间: {exp_time}", str(cfg.get("server.code_title","WeRss账号切换成功")))
                                 return True
