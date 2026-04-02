@@ -55,17 +55,25 @@ class WebSocketManager:
             return
         
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.create_task(self.broadcast(message))
-            else:
-                loop.run_until_complete(self.broadcast(message))
-        except RuntimeError:
-            # 没有事件循环，尝试创建新的
+            # 尝试获取运行中的事件循环
             try:
-                asyncio.run(self.broadcast(message))
-            except Exception as e:
-                logger.warning(f"WebSocket 广播失败: {e}")
+                loop = asyncio.get_running_loop()
+                # 如果有运行中的循环，创建任务
+                asyncio.create_task(self.broadcast(message))
+            except RuntimeError:
+                # 没有运行中的循环，尝试获取或创建新循环
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_closed():
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                    loop.call_soon_threadsafe(
+                        lambda: asyncio.create_task(self.broadcast(message))
+                    )
+                except Exception as e:
+                    logger.warning(f"WebSocket 广播失败（无事件循环）: {e}")
+        except Exception as e:
+            logger.warning(f"WebSocket 广播失败: {e}")
     
     @property
     def connection_count(self) -> int:

@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from typing import Optional
 from core.auth import get_current_user_or_ak
-from core.queue import TaskQueue
+from core.queue import TaskQueue, ContentTaskQueue, get_all_queues_status
 from core.task.task import TaskScheduler
 from core.ws_manager import ws_manager
 from .base import success_response, error_response
@@ -16,29 +16,48 @@ async def get_queue_status(
     current_user: dict = Depends(get_current_user_or_ak)
 ):
     """
-    获取任务队列的详细状态信息
+    获取所有任务队列的详细状态信息
     
     返回:
-        - tag: 队列标签
-        - is_running: 是否运行中
-        - pending_count: 待执行任务数
-        - pending_tasks: 待执行任务列表
-        - current_task: 当前执行的任务
-        - history_count: 历史记录总数
-        - recent_history: 最近执行记录
+        - main_queue: 主队列（文章采集）状态
+        - content_queue: 内容补抓队列状态
     """
     try:
-        status = TaskQueue.get_detailed_status()
-        # logger.info(f"Queue status: {status}")
+        status = get_all_queues_status()
         return success_response(data=status)
     except Exception as e:
         logger.error(f"Get queue status error: {str(e)}")
+        return error_response(code=500, message=str(e))
+
+@router.get("/main/status", summary="获取主队列状态")
+async def get_main_queue_status(
+    current_user: dict = Depends(get_current_user_or_ak)
+):
+    """获取主队列（文章采集）状态"""
+    try:
+        status = TaskQueue.get_detailed_status()
+        return success_response(data=status)
+    except Exception as e:
+        logger.error(f"Get main queue status error: {str(e)}")
+        return error_response(code=500, message=str(e))
+
+@router.get("/content/status", summary="获取内容补抓队列状态")
+async def get_content_queue_status(
+    current_user: dict = Depends(get_current_user_or_ak)
+):
+    """获取内容补抓队列状态"""
+    try:
+        status = ContentTaskQueue.get_detailed_status()
+        return success_response(data=status)
+    except Exception as e:
+        logger.error(f"Get content queue status error: {str(e)}")
         return error_response(code=500, message=str(e))
 
 @router.get("/history", summary="获取任务执行历史")
 async def get_queue_history(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(10, ge=1, le=100, description="每页数量"),
+    queue_type: str = Query("main", description="队列类型: main 或 content"),
     current_user: dict = Depends(get_current_user_or_ak)
 ):
     """
@@ -47,37 +66,49 @@ async def get_queue_history(
     参数:
         page: 页码，从1开始
         page_size: 每页数量，默认10条
+        queue_type: 队列类型，main（主队列）或 content（内容补抓队列）
     """
     try:
-        result = TaskQueue._get_history_page_from_redis(page, page_size)
+        queue = ContentTaskQueue if queue_type == "content" else TaskQueue
+        result = queue._get_history_page_from_redis(page, page_size)
         return success_response(data=result)
     except Exception as e:
         return error_response(code=500, message=str(e))
 
 @router.post("/clear", summary="清空任务队列")
 async def clear_queue(
+    queue_type: str = Query("main", description="队列类型: main 或 content"),
     current_user: dict = Depends(get_current_user_or_ak)
 ):
     """
     清空任务队列中的所有待执行任务
     
+    参数:
+        queue_type: 队列类型，main（主队列）或 content（内容补抓队列）
+    
     注意: 正在执行的任务不会被中断
     """
     try:
-        TaskQueue.clear_queue()
+        queue = ContentTaskQueue if queue_type == "content" else TaskQueue
+        queue.clear_queue()
         return success_response(message="队列已清空")
     except Exception as e:
         return error_response(code=500, message=str(e))
 
 @router.post("/history/clear", summary="清空任务历史")
 async def clear_history(
+    queue_type: str = Query("main", description="队列类型: main 或 content"),
     current_user: dict = Depends(get_current_user_or_ak)
 ):
     """
     清空任务执行历史记录
+    
+    参数:
+        queue_type: 队列类型，main（主队列）或 content（内容补抓队列）
     """
     try:
-        TaskQueue.clear_history()
+        queue = ContentTaskQueue if queue_type == "content" else TaskQueue
+        queue.clear_history()
         return success_response(message="任务历史已清空")
     except Exception as e:
         return error_response(code=500, message=str(e))
@@ -156,11 +187,17 @@ async def queue_websocket(websocket: WebSocket, token: Optional[str] = None):
     消息格式:
     {
         "type": "queue_status",
-        "data": { ... 队列状态 ... }
+        "data": {
+            "main_queue": { ... 主队列状态 ... },
+            "content_queue": { ... 内容队列状态 ... }
+        }
     }
     """
+    logger.info(f"[WebSocket] 收到连接请求, token存在: {bool(token)}")
+    
     # 验证 token
     if not token:
+        logger.warning("[WebSocket] 未提供认证令牌")
         await websocket.close(code=4001, reason="未提供认证令牌")
         return
     
@@ -177,7 +214,10 @@ async def queue_websocket(websocket: WebSocket, token: Optional[str] = None):
         if not user:
             await websocket.close(code=4001, reason="用户不存在")
             return
+        
+        logger.info(f"[WebSocket] 用户 {username} 认证成功")
     except jwt.ExpiredSignatureError:
+        logger.warning("[WebSocket] 令牌已过期")
         await websocket.close(code=4001, reason="令牌已过期")
         return
     except jwt.PyJWTError as e:
@@ -190,24 +230,27 @@ async def queue_websocket(websocket: WebSocket, token: Optional[str] = None):
         return
     
     await ws_manager.connect(websocket)
+    logger.info(f"[WebSocket] 连接已建立，当前连接数: {ws_manager.connection_count}")
+    
     try:
-        # 立即发送当前状态
-        status = TaskQueue.get_detailed_status()
+        # 立即发送当前状态（所有队列）
+        status = get_all_queues_status()
         await websocket.send_json({
             "type": "queue_status",
             "data": status
         })
         
-        # 保持连接，定期推送状态（每3秒）
+        # 保持连接，定期推送状态（每10秒作为兜底，主要依靠实时推送）
         while True:
-            await asyncio.sleep(3)
-            status = TaskQueue.get_detailed_status()
+            await asyncio.sleep(10)
+            status = get_all_queues_status()
             await websocket.send_json({
                 "type": "queue_status",
                 "data": status
             })
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)
+        logger.info(f"[WebSocket] 客户端断开连接，当前连接数: {ws_manager.connection_count}")
     except Exception as e:
         logger.error(f"WebSocket 错误: {e}")
         ws_manager.disconnect(websocket)
@@ -215,7 +258,7 @@ async def queue_websocket(websocket: WebSocket, token: Optional[str] = None):
 
 async def broadcast_queue_status():
     """广播队列状态到所有 WebSocket 连接"""
-    status = TaskQueue.get_detailed_status()
+    status = get_all_queues_status()
     await ws_manager.broadcast({
         "type": "queue_status",
         "data": status
@@ -224,7 +267,7 @@ async def broadcast_queue_status():
 
 def broadcast_queue_status_sync():
     """同步版本：广播队列状态"""
-    status = TaskQueue.get_detailed_status()
+    status = get_all_queues_status()
     ws_manager.broadcast_sync({
         "type": "queue_status",
         "data": status

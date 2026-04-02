@@ -8,15 +8,48 @@ from datetime import datetime
 from dataclasses import dataclass, field, asdict
 from core.print import print_error, print_info, print_warning, print_success
 
-# Redis 键前缀
+# Redis 键前缀 - 主队列（文章列表采集）
 REDIS_KEY_PREFIX = "werss:queue"
 REDIS_KEY_PENDING = f"{REDIS_KEY_PREFIX}:pending"
 REDIS_KEY_CURRENT = f"{REDIS_KEY_PREFIX}:current"
 REDIS_KEY_HISTORY = f"{REDIS_KEY_PREFIX}:history"
 REDIS_KEY_STATUS = f"{REDIS_KEY_PREFIX}:status"
 
+# Redis 键前缀 - 内容补抓队列
+CONTENT_REDIS_KEY_PREFIX = "werss:content_queue"
+CONTENT_REDIS_KEY_PENDING = f"{CONTENT_REDIS_KEY_PREFIX}:pending"
+CONTENT_REDIS_KEY_CURRENT = f"{CONTENT_REDIS_KEY_PREFIX}:current"
+CONTENT_REDIS_KEY_HISTORY = f"{CONTENT_REDIS_KEY_PREFIX}:history"
+CONTENT_REDIS_KEY_STATUS = f"{CONTENT_REDIS_KEY_PREFIX}:status"
+
 # 全局 Redis 客户端（延迟初始化）
 _redis_client = None
+
+# 全局队列实例引用（用于广播）
+_task_queue_instance = None
+_content_queue_instance = None
+
+
+def _broadcast_queue_status():
+    """广播所有队列状态到 WebSocket 连接"""
+    try:
+        from core.ws_manager import ws_manager
+        status = get_all_queues_status()
+        ws_manager.broadcast_sync({
+            "type": "queue_status",
+            "data": status
+        })
+    except Exception as e:
+        print_error(f"广播队列状态失败: {e}")
+
+
+def get_all_queues_status() -> dict:
+    """获取所有队列的状态"""
+    global _task_queue_instance, _content_queue_instance
+    return {
+        'main_queue': _task_queue_instance.get_detailed_status() if _task_queue_instance else None,
+        'content_queue': _content_queue_instance.get_detailed_status() if _content_queue_instance else None
+    }
 
 
 def _get_redis():
@@ -106,8 +139,14 @@ class TaskRecord:
 class TaskQueueManager:
     """任务队列管理器，用于管理和执行排队任务（支持多进程）"""
     
-    def __init__(self, maxsize=0, tag=""):
-        """初始化任务队列"""
+    def __init__(self, maxsize=0, tag="", redis_prefix=None):
+        """初始化任务队列
+        
+        Args:
+            maxsize: 队列最大大小
+            tag: 队列标签
+            redis_prefix: Redis 键前缀配置，包含 pending, current, history, status
+        """
         self._queue = queue.Queue(maxsize=maxsize)
         self._thread_lock = threading.Lock()
         self._is_running = False
@@ -120,7 +159,16 @@ class TaskQueueManager:
         # 待执行任务列表（用于展示）
         self._pending_items: list[TaskItem] = []
         self._instance_id = id(self)
-        print_info(f"TaskQueueManager initialized, instance id: {self._instance_id}")
+        
+        # Redis 键前缀配置
+        self._redis_keys = redis_prefix or {
+            'pending': REDIS_KEY_PENDING,
+            'current': REDIS_KEY_CURRENT,
+            'history': REDIS_KEY_HISTORY,
+            'status': REDIS_KEY_STATUS
+        }
+        
+        print_info(f"TaskQueueManager initialized, instance id: {self._instance_id}, tag: {tag}")
         
     def _save_pending_to_redis(self):
         """保存待执行任务到 Redis"""
@@ -130,10 +178,10 @@ class TaskQueueManager:
         
         try:
             pending_list = [item.to_dict() for item in self._pending_items]
-            redis_client.delete(REDIS_KEY_PENDING)
+            redis_client.delete(self._redis_keys['pending'])
             if pending_list:
                 for item in pending_list:
-                    redis_client.rpush(REDIS_KEY_PENDING, json.dumps(item, ensure_ascii=False))
+                    redis_client.rpush(self._redis_keys['pending'], json.dumps(item, ensure_ascii=False))
         except Exception as e:
             print_error(f"保存待执行任务到 Redis 失败: {e}")
     
@@ -145,9 +193,9 @@ class TaskQueueManager:
         
         try:
             if task_record:
-                redis_client.hset(REDIS_KEY_CURRENT, mapping=task_record.to_dict())
+                redis_client.hset(self._redis_keys['current'], mapping=task_record.to_dict())
             else:
-                redis_client.delete(REDIS_KEY_CURRENT)
+                redis_client.delete(self._redis_keys['current'])
         except Exception as e:
             print_error(f"保存当前任务到 Redis 失败: {e}")
     
@@ -158,8 +206,8 @@ class TaskQueueManager:
             return
         
         try:
-            redis_client.lpush(REDIS_KEY_HISTORY, json.dumps(task_record.to_dict(), ensure_ascii=False))
-            redis_client.ltrim(REDIS_KEY_HISTORY, 0, self._history_max_size - 1)
+            redis_client.lpush(self._redis_keys['history'], json.dumps(task_record.to_dict(), ensure_ascii=False))
+            redis_client.ltrim(self._redis_keys['history'], 0, self._history_max_size - 1)
         except Exception as e:
             print_error(f"保存历史记录到 Redis 失败: {e}")
     
@@ -170,7 +218,7 @@ class TaskQueueManager:
             return
         
         try:
-            redis_client.delete(REDIS_KEY_HISTORY)
+            redis_client.delete(self._redis_keys['history'])
         except Exception as e:
             print_error(f"清空 Redis 历史记录失败: {e}")
     
@@ -181,7 +229,7 @@ class TaskQueueManager:
             return
         
         try:
-            redis_client.hset(REDIS_KEY_STATUS, mapping={
+            redis_client.hset(self._redis_keys['status'], mapping={
                 'is_running': str(self._is_running).lower(),
                 'tag': self.tag or '',
                 'pending_count': self._queue.qsize(),
@@ -197,7 +245,7 @@ class TaskQueueManager:
             return []
         
         try:
-            items = redis_client.lrange(REDIS_KEY_PENDING, 0, -1)
+            items = redis_client.lrange(self._redis_keys['pending'], 0, -1)
             return [json.loads(item) for item in items]
         except Exception as e:
             print_error(f"从 Redis 获取待执行任务失败: {e}")
@@ -210,7 +258,7 @@ class TaskQueueManager:
             return None
         
         try:
-            data = redis_client.hgetall(REDIS_KEY_CURRENT)
+            data = redis_client.hgetall(self._redis_keys['current'])
             if data and 'task_name' in data:
                 return data
             return None
@@ -225,7 +273,7 @@ class TaskQueueManager:
             return []
         
         try:
-            items = redis_client.lrange(REDIS_KEY_HISTORY, 0, limit - 1)
+            items = redis_client.lrange(self._redis_keys['history'], 0, limit - 1)
             return [json.loads(item) for item in items]
         except Exception as e:
             print_error(f"从 Redis 获取历史记录失败: {e}")
@@ -246,14 +294,14 @@ class TaskQueueManager:
             return {'history': [], 'total': 0, 'page': page, 'page_size': page_size, 'total_pages': 0}
         
         try:
-            total = redis_client.llen(REDIS_KEY_HISTORY)
+            total = redis_client.llen(self._redis_keys['history'])
             total_pages = (total + page_size - 1) // page_size if total > 0 else 0
             
             # Redis 列表是从新到旧存储的（LPUSH），所以计算偏移量
             start = (page - 1) * page_size
             end = start + page_size - 1
             
-            items = redis_client.lrange(REDIS_KEY_HISTORY, start, end)
+            items = redis_client.lrange(self._redis_keys['history'], start, end)
             history = [json.loads(item) for item in items]
             
             return {
@@ -274,7 +322,7 @@ class TaskQueueManager:
             return 0
         
         try:
-            return redis_client.llen(REDIS_KEY_HISTORY)
+            return redis_client.llen(self._redis_keys['history'])
         except Exception as e:
             print_error(f"从 Redis 获取历史记录数量失败: {e}")
             return 0
@@ -321,6 +369,9 @@ class TaskQueueManager:
             # 保存到 Redis
             self._save_pending_to_redis()
             self._save_status_to_redis()
+            
+            # 广播队列状态更新
+            _broadcast_queue_status()
             
         print_success(f"{self.tag}队列任务添加成功 [{display_name}]\n")
         return True
@@ -374,6 +425,9 @@ class TaskQueueManager:
                         )
                         # 保存当前任务到 Redis
                         self._save_current_task_to_redis(self._current_task)
+                    
+                    # 广播队列状态更新（任务开始）
+                    _broadcast_queue_status()
                     
                     print_info(f"Task started: {task_name}")
                     
@@ -436,6 +490,9 @@ class TaskQueueManager:
                             self._save_current_task_to_redis(None)
                             self._save_status_to_redis()
                     
+                    # 广播队列状态更新（任务完成）
+                    _broadcast_queue_status()
+                    
                     # 确保任务完成标记和资源释放
                     self._queue.task_done()
                     # 强制垃圾回收
@@ -492,7 +549,7 @@ class TaskQueueManager:
         is_running = self._is_running
         if redis_client:
             try:
-                status = redis_client.hgetall(REDIS_KEY_STATUS)
+                status = redis_client.hgetall(self._redis_keys['status'])
                 if status and 'is_running' in status:
                     is_running = status['is_running'] == 'true'
             except Exception:
@@ -514,6 +571,8 @@ class TaskQueueManager:
             self._history.clear()
             self._clear_history_from_redis()
             self._save_status_to_redis()
+            # 广播队列状态更新
+            _broadcast_queue_status()
             print_success("任务历史记录已清空")
             
     def clear_queue(self) -> None:
@@ -528,6 +587,8 @@ class TaskQueueManager:
             self._pending_items.clear()
             self._save_pending_to_redis()
             self._save_status_to_redis()
+            # 广播队列状态更新
+            _broadcast_queue_status()
             print_success("队列已清空")
             
     def delete_queue(self) -> None:
@@ -544,9 +605,24 @@ class TaskQueueManager:
             print_success("队列已删除")
 
 # 创建全局单例（模块级变量，确保唯一实例）
-TaskQueue = TaskQueueManager(tag="默认队列")
+TaskQueue = TaskQueueManager(tag="文章采集")
+_task_queue_instance = TaskQueue  # 设置全局实例引用
 print_info(f"TaskQueue singleton created, instance id: {TaskQueue._instance_id}")
 TaskQueue.run_task_background()
+
+# 内容补抓队列
+ContentTaskQueue = TaskQueueManager(
+    tag="内容补抓",
+    redis_prefix={
+        'pending': CONTENT_REDIS_KEY_PENDING,
+        'current': CONTENT_REDIS_KEY_CURRENT,
+        'history': CONTENT_REDIS_KEY_HISTORY,
+        'status': CONTENT_REDIS_KEY_STATUS
+    }
+)
+_content_queue_instance = ContentTaskQueue  # 设置全局实例引用
+print_info(f"ContentTaskQueue singleton created, instance id: {ContentTaskQueue._instance_id}")
+ContentTaskQueue.run_task_background()
 
 if __name__ == "__main__":
     def task1():
