@@ -146,30 +146,35 @@ class PlaywrightController:
                 browser_type = self.driver.chromium  # 默认使用chromium
             print(f"启动浏览器: {browser_name}, 无头模式: {headless}, 移动模式: {mobile_mode}, 反爬虫: {anti_crawler}")
             # 设置启动选项
-            # 基础启动参数（所有浏览器通用）
-            base_args = [
-                "--disable-web-security",  # 禁用同源策略（可选）
-                "--disable-webrtc",  # 禁用 WebRTC（防止真实 IP 泄露）
-                "--disable-extensions",  # 禁用扩展
-                "--disable-plugins",  # 禁用插件
-                "--disable-images",  # 禁用图片加载（可选，加速）
-                "--disable-background-networking",  # 禁用后台网络
-                "--disable-sync",  # 禁用同步
-                "--metrics-recording-only",  # 禁用指标记录
-                "--no-first-run",  # 跳过首次运行
-                "--disable-default-apps",  # 禁用默认应用
-                "--no-default-browser-check",  # 跳过默认浏览器检查
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",  # 可选：禁用GPU以统一渲染特征
-            ]
 
-            # Chromium 特定参数（webkit 不支持）
-            if browser_name.lower() != "webkit":
-                base_args.extend([
-                    "--disable-blink-features=AutomationControlled",  # 禁用自动化检测（仅 Chromium 支持）
-                    "--disable-features=IsolateOrigins,site-per-process",  # 禁用站点隔离（仅 Chromium 支持）
-                ])
+            # 根据浏览器类型使用不同的参数
+            if browser_name.lower() == "webkit":
+                # Webkit 浏览器参数（更保守，只支持少数参数）
+                base_args = [
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                ]
+            else:
+                # Chromium/Firefox 浏览器参数（功能更丰富）
+                base_args = [
+                    # "--disable-blink-features=AutomationControlled",  # 禁用自动化检测
+                    # "--disable-web-security",  # 禁用同源策略（可选）
+                    "--disable-features=IsolateOrigins,site-per-process",  # 禁用站点隔离
+                    "--disable-webrtc",  # 禁用 WebRTC（防止真实 IP 泄露）
+                    "--disable-extensions",  # 禁用扩展
+                    "--disable-plugins",  # 禁用插件
+                    "--disable-images",  # 禁用图片加载（可选，加速）
+                    "--disable-background-networking",  # 禁用后台网络
+                    "--disable-sync",  # 禁用同步
+                    "--metrics-recording-only",  # 禁用指标记录
+                    "--no-first-run",  # 跳过首次运行
+                    "--disable-default-apps",  # 禁用默认应用
+                    "--no-default-browser-check",  # 跳过默认浏览器检查
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",  # 可选：禁用GPU以统一渲染特征
+                ]
 
             launch_options = {
                 "headless": headless,
