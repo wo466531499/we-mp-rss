@@ -375,24 +375,63 @@ class WXArticleFetcher:
         try:
             if info["content"]!="DELETED" and hasattr(self, 'page') and self.page:
                 page = self.page
-                # 等待关键元素加载
-                # 使用更精确的选择器避免匹配多个元素
-                ele_logo = page.locator('#js_like_profile_bar .wx_follow_avatar img')
-                # 获取<img>标签的src属性
-                logo_src = ele_logo.get_attribute('src')
-
+                
+                # 等待公众号信息区域加载
+                # 尝试多个选择器以提高兼容性
+                logo_src = None
+                selectors = [
+                    '#js_like_profile_bar .wx_follow_avatar img',
+                    '#js_like_profile_bar img.wx_follow_avatar_pic',
+                    '.wx_follow_avatar img'
+                ]
+                
+                for selector in selectors:
+                    try:
+                        ele_logo = page.locator(selector)
+                        # 显式等待元素出现，设置较短的超时时间（5秒）
+                        logo_src = ele_logo.get_attribute('src', timeout=5000)
+                        if logo_src:
+                            print_success(f"使用选择器 {selector} 成功获取公众号头像")
+                            break
+                    except Exception as e:
+                        print_warning(f"选择器 {selector} 获取失败: {str(e)}")
+                        continue
+                
+                if not logo_src:
+                    print_warning("所有头像选择器均失败，尝试从meta标签获取")
+                    # 备选方案：从页面meta标签或其他来源获取
+                    logo_src = page.locator('meta[property="og:image"]').get_attribute("content", timeout=3000)
+                
                 # 获取公众号名称
-                title = page.evaluate('() => $("#js_wx_follow_nickname").text()')
+                title = None
+                try:
+                    title = page.evaluate('() => $("#js_wx_follow_nickname").text()')
+                except Exception as e:
+                    print_warning(f"获取公众号名称失败: {str(e)}")
+                    # 备选方案：从meta标签获取
+                    try:
+                        title = page.locator('meta[property="og:article:author"]').get_attribute("content", timeout=3000)
+                    except:
+                        pass
+                
+                # 获取biz
                 biz = page.evaluate('() => window.biz')
+                
                 info["mp_info"]={
-                    "mp_name":title,
-                    "logo":logo_src,
+                    "mp_name": title or "未知公众号",
+                    "logo": logo_src or "",
                     "biz": biz or self.extract_biz_from_source(url, page), 
                 }
                 info["mp_id"]= "MP_WXS_"+base64.b64decode(info["mp_info"]["biz"]).decode("utf-8")
         except Exception as e:
             print_error(f"获取公众号信息失败: {str(e)}")   
-            pass
+            # 即使获取公众号信息失败，也不影响文章内容的获取
+            info["mp_info"] = {
+                "mp_name": "未知公众号",
+                "logo": "",
+                "biz": ""
+            }
+            info["mp_id"] = ""
         finally:
             # 确保浏览器资源被正确释放
             self.Close()
@@ -451,22 +490,29 @@ class WXArticleFetcher:
                     style = img_tag['style']
                     # 使用正则表达式替换width属性
                     style = re.sub(r'width\s*:\s*\d+\s*px', 'width: 1080px', style)
-                    img_tag['style'] = style
+                    # img_tag['style'] = style
             return  js_content_div.prettify()
         except Exception as e:
             print_error(f"修复图片失败: {str(e)}")
         return content
     def get_image_url(self,url:str)->str:
-        base_url=cfg.get("server.base_url","")
-        return f"{base_url}/static/res/logo/{url}" 
+        # base_url=cfg.get("server.base_url","")
+        # return f"{base_url}/static/res/logo/{url}" 
+        return f"{url}" 
     def get_description(self,content:str,length:int=200)->str:
-        soup = BeautifulSoup(content, 'html.parser')
-            # 找到内容
-        js_content_div = soup
-        if js_content_div is None:
+        # 防御性检查：确保 content 不是 None
+        if not content:
             return ""
-        content = js_content_div.get_text().strip().strip("\n").replace("\n"," ").replace("\r"," ")
-        return content[:length]+"..." if len(content)>length else content
+        try:
+            soup = BeautifulSoup(content, 'html.parser')
+            # 找到内容
+            js_content_div = soup
+            if js_content_div is None:
+                return ""
+            text = js_content_div.get_text().strip().strip("\n").replace("\n"," ").replace("\r"," ")
+            return text[:length]+"..." if len(text)>length else text
+        except Exception:
+            return ""
 
     def proxy_images(self,content:str)->str:
         # 防御性检查：确保 content 不是 None
@@ -496,11 +542,21 @@ class WXArticleFetcher:
             print_error(f"Proxy图片失败: {str(e)}")
         return content
    
-    def clean_article_content(self,html_content: str):
+    def clean_article_content(self,html_content: str,mp_id:str=""):
         from tools.htmltools import htmltools
         html_content=self.fix_images(html_content)
+        # 应用过滤规则
+        try:
+            from apis.filter_rule import apply_filter_rules
+            print(f"[DB] 准备应用过滤规则: mp_id={mp_id}, content_html存在={html_content is not None}")
+            if html_content:
+                html_content = apply_filter_rules(html_content, mp_id)
+
+        except Exception as e:
+            print_warning(f"应用过滤规则失败: {e}")
         if not cfg.get("gather.clean_html",False):
             return html_content
+        
         return htmltools.clean_html(str(html_content).strip(),
                                 remove_ids=
                                 ['content_bottom_interaction',
