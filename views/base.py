@@ -178,7 +178,6 @@ def _render_template_with_error(template_path: str, error_msg: str, breadcrumb: 
 
 def process_content_images(content: str) -> str:
     """处理文章内容中的图片链接，添加前缀"""
-    return content
     if not content:
         return content
     return Web.proxy_images(content)

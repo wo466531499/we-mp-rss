@@ -92,7 +92,8 @@ def test_Gather_Article():
     from core.wx.base import WxGather
     ga=WxGather().Model("web")
     urls=[
-        "https://mp.weixin.qq.com/s/-J7tiMKzYSr60thWKtFbYQ",
+        # "https://mp.weixin.qq.com/s/-J7tiMKzYSr60thWKtFbYQ",
+        "https://mp.weixin.qq.com/s/z51LqW6rEE7uqUMGARPElA",
         #   "https://mp.weixin.qq.com/s/r8AgtesEVSnV-QpEbpb8-Q",
         #   "https://mp.weixin.qq.com/s?__biz=MzI3MTQzNjYxNw==&mid=2247912631&idx=1&sn=6a60ca17a85b2aac8c1236c9df8cbe36&scene=21&poc_token=HNMGC2mj1itdGEMeEq01KxIvG5QUmsY-ZUxsdewX"
         ]
@@ -526,7 +527,7 @@ if __name__=="__main__":
     # test_anti_bot_detection()
     # test_screenshot()
     test_Gather_Article()
-    text_fix()    
+    # text_fix()    
     # testWx_Api()
     # test_fetch_articles_without_content()
     # testWeb()

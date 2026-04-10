@@ -90,7 +90,7 @@ class WXArticleFetcher:
                 publish_time = await self._extract_publish_time(page)
                 
                 # 获取内容
-                content = await page.content()
+                content = await page.locator('#page-content').inner_html()
                 
                 # 提取 biz
                 biz = self._extract_biz(url, content)
@@ -211,42 +211,70 @@ class WXArticleFetcher:
 # Web 工具类(兼容旧代码)
 class Web:
     """Web 工具类,提供文章内容清理等功能"""
-
     @staticmethod
-    def clean_article_content(html_content: str) -> str:
-        """
-        清理文章内容
-
-        Args:
-            html_content: HTML 内容
-
-        Returns:
-            清理后的内容
-        """
-        if not html_content:
-            return ""
-
+    def fix_images(content:str)->str:
+            try:
+                soup = BeautifulSoup(content, 'html.parser')
+                # 找到内容
+                js_content_div = soup
+                # 移除style属性中的visibility: hidden;
+                if js_content_div is None:
+                    return ""
+                js_content_div.attrs.pop('style', None)
+                # 找到所有的img标签
+                img_tags = js_content_div.find_all('img')
+                # 遍历每个img标签并修改属性，设置宽度为1080p
+                for img_tag in img_tags:
+                    if 'data-src' in img_tag.attrs:
+                        img_tag['src'] = img_tag['data-src']
+                        del img_tag['data-src']
+                    if 'style' in img_tag.attrs:
+                        style = img_tag['style']
+                        # 使用正则表达式替换width属性
+                        style = re.sub(r'width\s*:\s*\d+\s*px', 'width: 1080px', style)
+                        # img_tag['style'] = style
+                return  js_content_div.prettify()
+            except Exception as e:
+                print_error(f"修复图片失败: {str(e)}")
+            return content
+    @staticmethod
+    def clean_article_content(html_content: str,mp_id:str=""):
+        from tools.htmltools import htmltools
+        html_content=Web.fix_images(html_content)
+        # 应用过滤规则
         try:
-            # 使用 BeautifulSoup 清理 HTML
-            soup = BeautifulSoup(html_content, 'html.parser')
-
-            # 移除脚本和样式
-            for script in soup(["script", "style"]):
-                script.decompose()
-
-            # 获取文本
-            text = soup.get_text()
-
-            # 清理多余空白
-            lines = (line.strip() for line in text.splitlines())
-            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-            text = '\n'.join(chunk for chunk in chunks if chunk)
-
-            return text
+            from apis.filter_rule import apply_filter_rules
+            print(f"[DB] 准备应用过滤规则: mp_id={mp_id}, content_html存在={html_content is not None}")
+            if html_content:
+                html_content = apply_filter_rules(html_content, mp_id)
 
         except Exception as e:
-            print_error(f"清理文章内容失败: {e}")
+            print_warning(f"应用过滤规则失败: {e}")
+        if not cfg.get("gather.clean_html",False):
             return html_content
+        
+        return htmltools.clean_html(str(html_content).strip(),
+                                remove_ids=
+                                ['content_bottom_interaction',
+                                 'activity-name',
+                                 'meta_content',
+                                 "js_article_bottom_bar",
+                                 "js_pc_weapp_code",
+                                 "js_novel_card",
+                                 "js_pc_qr_code"
+                                 ],
+                                 remove_selectors=[
+                                     "link",
+                                     "head",
+                                     "script"
+                                 ],
+                                 remove_attributes=[
+                                     {"name":"style","value":"display: none;"},
+                                     {"name":"style","value":"display:none;"},
+                                     {"name":"aria-hidden","value":"true"},
+                                 ],
+                                 remove_normal_tag=True
+                                 )
 
     @staticmethod
     def get_article_content(url: str) -> Dict:
@@ -286,32 +314,19 @@ class Web:
             return {}
 
     @staticmethod
-    def get_description(content: str, max_length: int = 200) -> str:
-        """
-        从内容中提取描述
-
-        Args:
-            content: HTML 内容
-            max_length: 最大长度
-
-        Returns:
-            描述文本
-        """
+    def get_description(content:str,length:int=200)->str:
+        # 防御性检查：确保 content 不是 None
         if not content:
             return ""
-
         try:
-            # 清理内容
-            cleaned = Web.clean_article_content(content)
-
-            # 截取前 max_length 个字符
-            if len(cleaned) > max_length:
-                return cleaned[:max_length] + "..."
-            else:
-                return cleaned
-
-        except Exception as e:
-            print_error(f"提取描述失败: {e}")
+            soup = BeautifulSoup(content, 'html.parser')
+            # 找到内容
+            js_content_div = soup
+            if js_content_div is None:
+                return ""
+            text = js_content_div.get_text().strip().strip("\n").replace("\n"," ").replace("\r"," ")
+            return text[:length]+"..." if len(text)>length else text
+        except Exception:
             return ""
 
     @staticmethod
@@ -320,13 +335,17 @@ class Web:
         从内容中提取图片URL
 
         Args:
-            content: HTML 内容
+            content: HTML 内容或直接的图片URL
 
         Returns:
             图片URL
         """
         if not content:
             return ""
+
+        # 如果传入的已经是URL，直接返回
+        if content.startswith(('http://', 'https://')):
+            return content
 
         try:
             # 使用 BeautifulSoup 解析

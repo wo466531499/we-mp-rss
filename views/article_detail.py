@@ -82,7 +82,7 @@ async def article_detail_view(
         
         # 处理文章数据
         # 处理文章内容中的图片链接
-        raw_content = article.content_html or ""
+        raw_content = article.content
         processed_content = process_content_images(raw_content)
         
         article_data = {
