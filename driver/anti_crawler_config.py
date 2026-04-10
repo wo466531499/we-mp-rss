@@ -68,8 +68,8 @@ class AntiCrawlerConfig:
         config = {
             "user_agent": self._ua_generator.get_realistic_user_agent(mobile_mode),
             "viewport": {
-                "width": random.randint(1200, 1920) if not mobile_mode else 375,
-                "height": random.randint(800, 1080) if not mobile_mode else 812,
+                "width": random.randint(1200, 1920) if not mobile_mode else 720,
+                "height": random.randint(800, 1080) if not mobile_mode else 1920,
                 "device_scale_factor": random.choice([1, 1.25, 1.5, 2])
             },
             "java_script_enabled": True,

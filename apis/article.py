@@ -37,7 +37,12 @@ def _get_active_refresh_task(article_id: str):
     return None
 
 
-def _run_refresh_article_task(task_id: str, article_id: str):
+def _run_refresh_article_task_wrapper(task_id: str, article_id: str):
+    """包装器:在线程中运行 async 函数"""
+    import asyncio
+    asyncio.run(_run_refresh_article_task(task_id, article_id))
+
+async def _run_refresh_article_task(task_id: str, article_id: str):
     session = DB.get_session()
     fetcher = None
     try:
@@ -69,7 +74,7 @@ def _run_refresh_article_task(task_id: str, article_id: str):
             return
 
         fetcher = WXArticleFetcher()
-        fetched = fetcher.get_article_content(target_url)
+        fetched = await fetcher.get_article_content(target_url)
         fetched_content = fetched.get("content")
 
         if fetched_content != "DELETED" and not fetched_content:
@@ -89,7 +94,7 @@ def _run_refresh_article_task(task_id: str, article_id: str):
         if fetched_content == "DELETED":
             article.description = fetched.get("description") or article.description
         else:
-            article.description = fetched.get("description") or fetcher.get_description(article.content or "")
+            article.description = fetched.get("description") or article.description
         article.pic_url = fetched.get("topic_image") or fetched.get("pic_url") or article.pic_url
         article.status = DATA_STATUS.DELETED if fetched_content == "DELETED" else DATA_STATUS.ACTIVE
 
@@ -120,11 +125,6 @@ def _run_refresh_article_task(task_id: str, article_id: str):
             "message": f"文章刷新失败: {str(e)}"
         })
     finally:
-        if fetcher is not None:
-            try:
-                fetcher.Close()
-            except Exception:
-                pass
         session.close()
 
 
@@ -390,7 +390,7 @@ async def refresh_article(
         _set_refresh_task(task_id, task)
 
         threading.Thread(
-            target=_run_refresh_article_task,
+            target=_run_refresh_article_task_wrapper,
             args=(task_id, article_id),
             daemon=True
         ).start()

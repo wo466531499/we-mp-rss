@@ -1,25 +1,25 @@
+"""
+Async WX Article Fetcher - 完全异步版本
+"""
 import random
-from socket import timeout
-from .playwright_driver import PlaywrightController
-from typing import Dict
-from core.print import print_error,print_info,print_success,print_warning
 import time
-import core.wait as Wait
 import base64
 import re
-from bs4 import BeautifulSoup
 import os
 from datetime import datetime
+from typing import Dict
+from bs4 import BeautifulSoup
+
+from .playwright_driver import PlaywrightController
+from core.print import print_error, print_info, print_success, print_warning
 from core.config import cfg
-from core.redis_client import record_env_exception
+
 
 class WXArticleFetcher:
-    """微信公众号文章获取器
+    """
+    异步微信公众号文章获取器
     
-    基于WX_API登录状态获取文章内容
-    
-    Attributes:
-        wait_timeout: 显式等待超时时间(秒)
+    完全基于 async/await,与 FastAPI 完美兼容
     """
     
     def __init__(self, wait_timeout: int = 10000):
@@ -27,41 +27,147 @@ class WXArticleFetcher:
         self.wait_timeout = wait_timeout
         self.controller = PlaywrightController()
         self.browser_proxy_url = ""
+        
         if cfg.get("proxy.enabled", False):
             self.browser_proxy_url = cfg.get("proxy.http_url", "")
-        if not self.controller:
-            raise Exception("WebDriver未初始化或未登录")
-    
-    def convert_publish_time_to_timestamp(self, publish_time_str: str) -> int:
-        """将发布时间字符串转换为时间戳
-
+            
+    async def get_article_content(self, url: str) -> Dict:
+        """
+        获取文章内容(异步)
+        
         Args:
-            publish_time_str: 发布时间字符串，如 "2024-01-01" 或 "2024-01-01 12:30"
-
+            url: 文章URL
+            
         Returns:
-            时间戳（毫秒）
+            文章信息字典
         """
         try:
-            # 尝试解析不同的时间格式
+            # 使用异步上下文管理器
+            async with PlaywrightController(
+                proxy_url=self.browser_proxy_url,
+                mobile_mode=True
+            ) as controller:
+                
+                # 打开URL
+                success = await controller.open_url(url, timeout=self.wait_timeout)
+                if not success:
+                    raise Exception("页面加载失败")
+                    
+                page = controller.page
+                
+                # 等待页面加载
+                await asyncio.sleep(2)
+                
+                # 获取页面内容
+                body = await page.content()
+                
+                # 检查是否被删除
+                if "该内容已被发布者删除" in body:
+                    raise Exception("违规无法查看")
+                    
+                # 处理"轻触阅读原文"按钮
+                if "轻触阅读原文" in body:
+                    try:
+                        button = page.locator('text=轻触阅读原文')
+                        button_count = await button.count()
+                        if button_count > 0:
+                            await button.first.wait_for(state="visible", timeout=1000)
+                            await button.first.click()
+                            await asyncio.sleep(2)
+                    except Exception as e:
+                        print_warning(f"阅读原文按钮处理失败: {str(e)}")
+                        
+                # 获取文章信息
+                title = await page.locator('meta[property="og:title"]').get_attribute("content")
+                author = await page.locator('meta[property="og:article:author"]').get_attribute("content")
+                description = await page.locator('meta[property="og:description"]').get_attribute("content")
+                topic_image = await page.locator('meta[property="twitter:image"]').get_attribute("content")
+                
+                if not title:
+                    title = await page.evaluate('() => document.title')
+                    
+                # 获取发布时间
+                publish_time = await self._extract_publish_time(page)
+                
+                # 获取内容
+                content = await page.content()
+                
+                # 提取 biz
+                biz = self._extract_biz(url, content)
+                
+                # 构建结果
+                info = {
+                    "title": title or "",
+                    "author": author or "",
+                    "description": description or "",
+                    "topic_image": topic_image or "",
+                    "publish_time": publish_time,
+                    "content": content,
+                    "biz": biz,
+                    "url": url
+                }
+                
+                return info
+                
+        except Exception as e:
+            print_error(f"获取文章内容失败: {str(e)}")
+            raise
+            
+    async def _extract_publish_time(self, page) -> int:
+        """
+        提取发布时间(异步)
+        """
+        try:
+            # 尝试从 meta 标签获取
+            publish_time_str = await page.locator('meta[property="article:published_time"]').get_attribute("content")
+            
+            if publish_time_str:
+                return self._convert_publish_time_to_timestamp(publish_time_str)
+                
+            # 尝试从页面内容获取
+            content = await page.content()
+            
+            # 常见的时间格式
+            patterns = [
+                r'publish_time\s*=\s*["\']([^"\']+)["\']',
+                r'var\s+publish_time\s*=\s*["\']([^"\']+)["\']',
+                r'create_time\s*=\s*["\']([^"\']+)["\']',
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, content)
+                if match:
+                    return self._convert_publish_time_to_timestamp(match.group(1))
+                    
+            # 返回当前时间
+            return int(datetime.now().timestamp())
+            
+        except Exception as e:
+            print_warning(f"提取发布时间失败: {str(e)}")
+            return int(datetime.now().timestamp())
+            
+    def _convert_publish_time_to_timestamp(self, publish_time_str: str) -> int:
+        """
+        将发布时间字符串转换为时间戳
+        """
+        try:
             formats = [
-                "%Y-%m-%d %H:%M:%S",  # 2024-01-01 12:30:45
-                "%Y年%m月%d日 %H:%M",        # 2024年03月24日 17:14
-                "%Y-%m-%d %H:%M",     # 2024-01-01 12:30
-                "%Y-%m-%d",           # 2024-01-01
-                "%Y年%m月%d日",        # 2024年01月01日
-                "%m月%d日",            # 01月01日 (当年)
+                "%Y-%m-%d %H:%M:%S",
+                "%Y年%m月%d日 %H:%M",
+                "%Y-%m-%d %H:%M",
+                "%Y-%m-%d",
+                "%Y年%m月%d日",
+                "%m月%d日",
             ]
             
             for fmt in formats:
                 try:
                     if fmt == "%m月%d日":
-                        # 对于只有月日的格式，智能判断年份
                         current_date = datetime.now()
                         current_year = current_date.year
                         full_time_str = f"{current_year}年{publish_time_str}"
                         dt = datetime.strptime(full_time_str, "%Y年%m月%d日")
                         
-                        # 如果解析出的日期在未来，使用上一年
                         if dt > current_date:
                             dt = dt.replace(year=current_year - 1)
                     else:
@@ -69,617 +175,169 @@ class WXArticleFetcher:
                     return int(dt.timestamp())
                 except ValueError:
                     continue
-            
-            # 如果所有格式都失败，返回当前时间戳
-            print_warning(f"无法解析时间格式: {publish_time_str}，使用当前时间")
+                    
             return int(datetime.now().timestamp())
             
         except Exception as e:
             print_error(f"时间转换失败: {e}")
             return int(datetime.now().timestamp())
-       
-        
-    def extract_biz_from_source(self, url: str, page=None) -> str:
-        """从URL或页面源码中提取biz参数
-        
-        Args:
-            url: 文章URL
-            page: Playwright Page实例，可选
             
-        Returns:
-            biz参数值
+    def _extract_biz(self, url: str, content: str) -> str:
         """
-        # 尝试从URL中提取
+        提取 biz 参数
+        """
+        # 从 URL 提取
         match = re.search(r'[?&]__biz=([^&]+)', url)
         if match:
             return match.group(1)
             
-        # 从页面源码中提取（需要page参数）
-        if page is None:
-            if not hasattr(self, 'page') or self.page is None:
-                return ""
-            page = self.page
+        # 从内容提取
+        match = re.search(r'var\s+biz\s*=\s*["\']([^"\']+)["\']', content)
+        if match:
+            return match.group(1)
             
+        return ""
+
+
+# Web 工具类(兼容旧代码)
+class Web:
+    """Web 工具类,提供文章内容清理等功能"""
+
+    @staticmethod
+    def clean_article_content(html_content: str) -> str:
+        """
+        清理文章内容
+
+        Args:
+            html_content: HTML 内容
+
+        Returns:
+            清理后的内容
+        """
+        if not html_content:
+            return ""
+
         try:
-            # 从页面源码中查找biz信息
-            page_source = page.content()
-            print_info(f'开始解析Biz')
-            biz_match = re.search(r'var biz = "([^"]+)"', page_source)
-            if biz_match:
-                return biz_match.group(1)
-                
-            # 尝试其他可能的biz存储位置
-            biz_match = re.search(r'window\.__biz=([^&]+)', page_source)
-            if biz_match:
-                return biz_match.group(1)
-            # biz_match=page.evaluate('() =>window.biz')
-            return ""
-            
+            # 使用 BeautifulSoup 清理 HTML
+            soup = BeautifulSoup(html_content, 'html.parser')
+
+            # 移除脚本和样式
+            for script in soup(["script", "style"]):
+                script.decompose()
+
+            # 获取文本
+            text = soup.get_text()
+
+            # 清理多余空白
+            lines = (line.strip() for line in text.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            text = '\n'.join(chunk for chunk in chunks if chunk)
+
+            return text
+
         except Exception as e:
-            print_error(f"从页面源码中提取biz参数失败: {e}")
-            return ""
-    def extract_id_from_url(self, url: str) -> str:
-        """从微信文章URL中提取ID
-        
+            print_error(f"清理文章内容失败: {e}")
+            return html_content
+
+    @staticmethod
+    def get_article_content(url: str) -> Dict:
+        """
+        获取文章内容(同步包装器,兼容旧代码)
+
+        注意: 这是一个同步包装器,会阻塞调用线程
+        建议使用 WXArticleFetcher().get_article_content() 的 async 版本
+
         Args:
             url: 文章URL
-            
+
         Returns:
-            文章ID字符串，如果提取失败返回None
-        """
-        try:
-            # 从URL中提取ID部分
-            match = re.search(r'/s/([A-Za-z0-9_-]+)', url)
-            if not match:
-                return ""
-                
-            id_str = match.group(1)
-            
-            # 添加必要的填充
-            padding = 4 - len(id_str) % 4
-            if padding != 4:
-                id_str += '=' * padding
-                
-            # 尝试解码base64
-            try:
-                id_number = base64.b64decode(id_str).decode("utf-8")
-                return id_number
-            except Exception as e:
-                # 如果base64解码失败，返回原始ID字符串
-                return id_str
-                
-        except Exception as e:
-            print_error(f"提取文章ID失败: {e}")
-            return ""  
-    def FixArticle(self, urls: list = [], mp_id: str = "") -> bool:
-        """批量修复文章内容
-        
-        Args:
-            urls: 文章URL列表，默认为示例URL
-            mp_id: 公众号ID，可选
-            
-        Returns:
-            操作是否成功
-        """
-        try:
-            from jobs.article import UpdateArticle
-            
-            # 设置默认URL列表
-            if urls is []:
-                urls = ["https://mp.weixin.qq.com/s/YTHUfxzWCjSRnfElEkL2Xg"]
-                
-            success_count = 0
-            total_count = len(urls)
-            
-            for i, url in enumerate(urls, 1):
-                if url=="":
-                    continue
-                print_info(f"正在处理第 {i}/{total_count} 篇文章: {url}")
-                
-                try:
-                    article_data = self.get_article_content(url)
-                    
-                    # 构建文章数据
-                    article = {
-                        "id": article_data.get('id'), 
-                        "title": article_data.get('title'),
-                        "mp_id": article_data.get('mp_id') if mp_id is None else mp_id, 
-                        "publish_time": article_data.get('publish_time'),
-                        "pic_url": article_data.get('pic_url'),
-                        "content": article_data.get('content'),
-                        "url": url,
-                    }
-                    
-                    # 删除content字段避免重复存储
-                    content_backup = article_data.get('content', '')
-                    del article_data['content']
-                    
-                    print_success(f"获取成功: {article_data}")
-                    
-                    # 更新文章
-                    ok = UpdateArticle(article, check_exist=True)
-                    if ok:
-                        success_count += 1
-                        print_info(f"已更新文章: {article_data.get('title', '未知标题')}")
-                    else:
-                        print_warning(f"更新失败: {article_data.get('title', '未知标题')}")
-                        
-                    # 恢复content字段
-                    article_data['content'] = content_backup
-                    
-                    # 避免请求过快，但只在非最后一个请求时等待
-                    Wait(1,2,tips=f"处理第 {i}/{total_count} 篇文章")
-                        
-                except Exception as e:
-                    print_error(f"处理文章失败 {url}: {e}")
-                    continue
-                    
-            print_success(f"批量处理完成: 成功 {success_count}/{total_count}")
-            return success_count > 0
-            
-        except Exception as e:
-            print_error(f"批量修复文章失败: {e}")
-            return False
-        finally:
-            self.Close() 
-    async def async_get_article_content(self,url:str)->Dict:
-        """异步获取文章内容
-        
-        使用子进程运行同步代码,完全避免 asyncio 环境冲突
+            文章信息字典
         """
         import asyncio
-        import multiprocessing
-        import queue
-        
-        def worker(url, result_queue, wait_timeout, browser_proxy_url):
-            """在子进程中运行同步代码"""
-            try:
-                # 在子进程中,完全没有 asyncio 事件循环
-                from .playwright_driver import PlaywrightController
-                
-                # 创建新的 fetcher 实例
-                fetcher = WXArticleFetcher(wait_timeout=wait_timeout)
-                fetcher.browser_proxy_url = browser_proxy_url
-                
-                result = fetcher.get_article_content(url)
-                result_queue.put(('success', result))
-            except Exception as e:
-                result_queue.put(('error', str(e)))
-        
-        # 使用 multiprocessing.Manager 创建共享队列
+
         try:
-            # 尝试使用多进程
-            m = multiprocessing.Manager()
-            result_queue = m.Queue()
-            
-            p = multiprocessing.Process(
-                target=worker,
-                args=(url, result_queue, self.wait_timeout, self.browser_proxy_url)
-            )
-            p.start()
-            p.join(timeout=60)  # 60秒超时
-            
-            if p.is_alive():
-                p.terminate()
-                raise Exception("获取文章内容超时")
-            
-            # 获取结果
-            if not result_queue.empty():
-                status, data = result_queue.get()
-                if status == 'success':
-                    return data
-                else:
-                    raise Exception(data)
-            else:
-                raise Exception("未获取到结果")
+            # 创建新的事件循环
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            try:
+                # 创建 fetcher 实例
+                fetcher = WXArticleFetcher()
+
+                # 运行异步方法
+                result = loop.run_until_complete(fetcher.get_article_content(url))
+
+                return result
+            finally:
+                # 清理事件循环
+                loop.close()
+
         except Exception as e:
-            # 如果多进程失败,回退到线程方案
-            print(f"多进程方案失败,回退到线程方案: {str(e)}")
-            
-            import threading
-            result_queue = queue.Queue()
-            
-            def thread_worker():
-                try:
-                    from .playwright_driver import PlaywrightController
-                    fetcher = WXArticleFetcher(wait_timeout=self.wait_timeout)
-                    fetcher.browser_proxy_url = self.browser_proxy_url
-                    result = fetcher.get_article_content(url)
-                    result_queue.put(('success', result))
-                except Exception as e:
-                    result_queue.put(('error', str(e)))
-            
-            thread = threading.Thread(target=thread_worker, daemon=True)
-            thread.start()
-            thread.join(timeout=60)
-            
-            if thread.is_alive():
-                raise Exception("获取文章内容超时")
-            
-            if not result_queue.empty():
-                status, data = result_queue.get()
-                if status == 'success':
-                    return data
-                else:
-                    raise Exception(data)
-            else:
-                raise Exception("未获取到结果")
-    def get_article_content(self, url: str) -> Dict:
-        """获取单篇文章详细内容
-        
+            print_error(f"获取文章内容失败: {e}")
+            return {}
+
+    @staticmethod
+    def get_description(content: str, max_length: int = 200) -> str:
+        """
+        从内容中提取描述
+
         Args:
-            url: 文章URL (如: https://mp.weixin.qq.com/s/qfe2F6Dcw-uPXW_XW7UAIg)
-            
+            content: HTML 内容
+            max_length: 最大长度
+
         Returns:
-            文章内容数据字典，包含:
-            - title: 文章标题
-            - author: 作者
-            - publish_time: 发布时间
-            - content: 正文HTML
-            - images: 图片URL列表
-            
-        Raises:
-            Exception: 如果未登录或获取内容失败
+            描述文本
         """
-        info={
-                "id": self.extract_id_from_url(url),
-                "title": "",
-                "publish_time": "",
-                "content": "",
-                "images": "",
-                "fetch_error": "",
-                "mp_info":{
-                "mp_name":"",   
-                "logo":"",
-                "biz": "",
-                }
-            }
-        try:
-            # 检查浏览器是否已启动,避免重复启动
-            if not self.controller.is_browser_started():
-                self.controller.start_browser(proxy_url=self.browser_proxy_url)
-        
-            self.page = self.controller.page
-            if cfg.get("proxy.deno_url","")!="" and cfg.get("proxy.enabled",False):
-                url=cfg.get("proxy.deno_url")+"/fetch?url="+url
-            print_warning(f"Get:{url} Wait:{self.wait_timeout}")
-            self.controller.open_url(url)
-            page = self.page
-            content=""
-            
-            # 等待页面加载完成
-            page.wait_for_load_state("domcontentloaded")
-            # body = page.evaluate('() => document.body.innerText')
-            body= page.locator("body").text_content().strip()
-            
-            info["content"]=body
-            if "当前环境异常，完成验证后即可继续访问" in body:
-                info["content"]=""
-                # 记录环境异常统计到Redis
-                try:
-                    record_env_exception(
-                        url=url,
-                        mp_name="",
-                        mp_id=""
-                    )
-                    print_warning(f"已记录环境异常统计: {url}")
-                except Exception as e:
-                    print_error(f"记录环境异常统计失败: {e}")
-                
-                Wait(tips="当前环境异常，完成验证后即可继续访问")
-                raise Exception("当前环境异常，完成验证后即可继续访问")
-            if "该内容已被发布者删除" in body or "The content has been deleted by the author." in body:
-                info["content"]="DELETED"
-                raise Exception("该内容已被发布者删除")
-            if  "内容审核中" in body:
-                info['content']="DELETED"
-                raise Exception("内容审核中")
-            if "该内容暂时无法查看" in body:
-                info["content"]="DELETED"
-                raise Exception("该内容暂时无法查看")
-            if "违规无法查看" in body:
-                info["content"]="DELETED"
-                raise Exception("违规无法查看")
-            if "发送失败无法查看" in body:
-                info["content"]="DELETED"
-                raise Exception("发送失败无法查看")
-            if "Unable to view this content because it violates regulation" in body:     
-                info["content"]="DELETED"
-                raise Exception("违规无法查看")
-            if "轻触阅读原文" in body:
-                print_info("检测到文章末尾的阅读原文提示,尝试点击")
-                try:
-                    # 查找按钮并检查是否可见
-                    button = page.locator('text=轻触阅读原文')
-                    button_count = button.count()
-                    
-                    if button_count > 0:
-                        # 等待按钮可见,最多等待5秒
-                        try:
-                            button.first.wait_for(state="visible", timeout=5000)
-                            page.touchscreen.tap(button.first.bounding_box().x + 10, button.first.bounding_box().y + 10)
-                            time.sleep(2)  # 等待内容加载
-                            print_info("成功点击阅读原文按钮")
-                        except Exception as e:
-                            # 按钮不可见或点击失败,继续处理当前内容
-                            print_warning(f"阅读原文按钮不可见或点击失败: {str(e)}")
-                            print_info("继续处理当前页面内容")
-                    else:
-                        print_warning("未找到阅读原文按钮")
-                except Exception as e:
-                    # 任何异常都不影响继续处理
-                    print_warning(f"处理阅读原文按钮时出错: {str(e)}")
-            
-
-            # 获取标题
-            title = page.locator('meta[property="og:title"]').get_attribute("content")
-            #获取作者
-            author = page.locator('meta[property="og:article:author"]').get_attribute("content")
-            #获取描述
-            description = page.locator('meta[property="og:description"]').get_attribute("content")
-            #获取题图
-            topic_image = page.locator('meta[property="twitter:image"]').get_attribute("content")
-
-            self.export_to_pdf(f"./data/{title}.pdf")
-            if title=="":
-                title = page.evaluate('() => document.title')
-            
-          
-         
-            # 获取正文内容和图片
-            content_element = page.locator("#js_content")
-            content = content_element.inner_html()
-
-            #获取图集内容 
-            if content=="":
-                content_element = page.locator("#js_article")
-                content = content_element.inner_html()
-
-            content=self.clean_article_content(str(content))
-            #获取图像资源
-            images = [
-                img.get_attribute("data-src") or img.get_attribute("src")
-                for img in content_element.locator("img").all()
-                if img.get_attribute("data-src") or img.get_attribute("src")
-            ]
-            images=[]
-            if images and len(images)>0:
-                info["pic_url"]=images[0]
-
-
-            try:
-
-                #获取发布时间
-                publish_time_str = page.locator("#publish_time").text_content().strip()
-                # 将发布时间转换为时间戳
-                publish_time = self.convert_publish_time_to_timestamp(publish_time_str)
-            except Exception as e:
-                print_warning(f"获取作者和发布时间失败: {e}")
-                publish_time=""
-            info["title"]=title
-            info["publish_time"]=publish_time
-            info["content"]=content
-            info["images"]=images
-            info["author"]=author
-            info["description"]=description
-            info["topic_image"]=topic_image
-
-        except Exception as e:
-            info["fetch_error"] = str(e)
-            print_error(f"文章内容获取失败: {str(e)}")
-            body_preview = body[:50] if 'body' in dir() else "N/A"
-            print_warning(f"页面内容预览: {body_preview}...")
-            # raise e
-            # 记录详细错误信息但继续执行
+        if not content:
+            return ""
 
         try:
-            if info["content"]!="DELETED" and hasattr(self, 'page') and self.page:
-                page = self.page
-                
-                # 等待公众号信息区域加载
-                # 尝试多个选择器以提高兼容性
-                logo_src = None
-                selectors = [
-                    '#js_like_profile_bar .wx_follow_avatar img',
-                    '#js_like_profile_bar img.wx_follow_avatar_pic',
-                    '.wx_follow_avatar img'
-                ]
-                
-                for selector in selectors:
-                    try:
-                        ele_logo = page.locator(selector)
-                        # 显式等待元素出现，设置较短的超时时间（5秒）
-                        logo_src = ele_logo.get_attribute('src', timeout=5000)
-                        if logo_src:
-                            print_success(f"使用选择器 {selector} 成功获取公众号头像")
-                            break
-                    except Exception as e:
-                        print_warning(f"选择器 {selector} 获取失败: {str(e)}")
-                        continue
-                
-                if not logo_src:
-                    print_warning("所有头像选择器均失败，尝试从meta标签获取")
-                    # 备选方案：从页面meta标签或其他来源获取
-                    logo_src = page.locator('meta[property="og:image"]').get_attribute("content", timeout=3000)
-                
-                # 获取公众号名称
-                title = None
-                try:
-                    title = page.evaluate('() => $("#js_wx_follow_nickname").text()')
-                except Exception as e:
-                    print_warning(f"获取公众号名称失败: {str(e)}")
-                    # 备选方案：从meta标签获取
-                    try:
-                        title = page.locator('meta[property="og:article:author"]').get_attribute("content", timeout=3000)
-                    except:
-                        pass
-                
-                # 获取biz
-                biz = page.evaluate('() => window.biz')
-                
-                info["mp_info"]={
-                    "mp_name": title or "未知公众号",
-                    "logo": logo_src or "",
-                    "biz": biz or self.extract_biz_from_source(url, page), 
-                }
-                info["mp_id"]= "MP_WXS_"+base64.b64decode(info["mp_info"]["biz"]).decode("utf-8")
-        except Exception as e:
-            print_error(f"获取公众号信息失败: {str(e)}")   
-            # 即使获取公众号信息失败，也不影响文章内容的获取
-            info["mp_info"] = {
-                "mp_name": "未知公众号",
-                "logo": "",
-                "biz": ""
-            }
-            info["mp_id"] = ""
-        finally:
-            # 确保浏览器资源被正确释放
-            self.Close()
-        return info
-    def Close(self):
-        """关闭浏览器"""
-        if hasattr(self, 'controller'):
-            self.controller.Close()
-        else:
-            print("WXArticleFetcher未初始化或已销毁")
-    def __del__(self):
-        """销毁文章获取器"""
-        try:
-            if hasattr(self, 'controller') and self.controller is not None:
-                self.controller.Close()
-        except Exception as e:
-            # 析构函数中避免抛出异常
-            pass
+            # 清理内容
+            cleaned = Web.clean_article_content(content)
 
-    def export_to_pdf(self, title=None):
-        """将文章内容导出为 PDF 文件
-        
+            # 截取前 max_length 个字符
+            if len(cleaned) > max_length:
+                return cleaned[:max_length] + "..."
+            else:
+                return cleaned
+
+        except Exception as e:
+            print_error(f"提取描述失败: {e}")
+            return ""
+
+    @staticmethod
+    def get_image_url(content: str) -> str:
+        """
+        从内容中提取图片URL
+
         Args:
-            output_path: 输出 PDF 文件的路径（可选）
+            content: HTML 内容
+
+        Returns:
+            图片URL
         """
-        output_path=""
-        try:
-            if cfg.get("export.pdf.enable",False)==False:
-                return
-            # 使用浏览器打印功能生成 PDF
-            if output_path:
-                import os
-                pdf_path=cfg.get("export.pdf.dir","./data/pdf")
-                output_path=os.path.abspath(f"{pdf_path}/{title}.pdf")
-            print_success(f"PDF 文件已生成{output_path}")
-        except Exception as e:
-            print_error(f"生成 PDF 失败: {str(e)}")
-    
-    def fix_images(self,content:str)->str:
-        try:
-            soup = BeautifulSoup(content, 'html.parser')
-            # 找到内容
-            js_content_div = soup
-            # 移除style属性中的visibility: hidden;
-            if js_content_div is None:
-                return ""
-            js_content_div.attrs.pop('style', None)
-            # 找到所有的img标签
-            img_tags = js_content_div.find_all('img')
-            # 遍历每个img标签并修改属性，设置宽度为1080p
-            for img_tag in img_tags:
-                if 'data-src' in img_tag.attrs:
-                    img_tag['src'] = img_tag['data-src']
-                    del img_tag['data-src']
-                if 'style' in img_tag.attrs:
-                    style = img_tag['style']
-                    # 使用正则表达式替换width属性
-                    style = re.sub(r'width\s*:\s*\d+\s*px', 'width: 1080px', style)
-                    # img_tag['style'] = style
-            return  js_content_div.prettify()
-        except Exception as e:
-            print_error(f"修复图片失败: {str(e)}")
-        return content
-    def get_image_url(self,url:str)->str:
-        # base_url=cfg.get("server.base_url","")
-        # return f"{base_url}/static/res/logo/{url}" 
-        return f"{url}" 
-    def get_description(self,content:str,length:int=200)->str:
-        # 防御性检查：确保 content 不是 None
         if not content:
             return ""
+
         try:
+            # 使用 BeautifulSoup 解析
             soup = BeautifulSoup(content, 'html.parser')
-            # 找到内容
-            js_content_div = soup
-            if js_content_div is None:
-                return ""
-            text = js_content_div.get_text().strip().strip("\n").replace("\n"," ").replace("\r"," ")
-            return text[:length]+"..." if len(text)>length else text
-        except Exception:
+
+            # 查找第一个图片标签
+            img = soup.find('img')
+
+            if img:
+                # 获取 src 属性
+                src = img.get('src') or img.get('data-src')
+                if src:
+                    return src
+
             return ""
 
-    def proxy_images(self,content:str)->str:
-        # 防御性检查：确保 content 不是 None
-        if not content:
+        except Exception as e:
+            print_error(f"提取图片URL失败: {e}")
             return ""
-        try:
-            soup = BeautifulSoup(content, 'html.parser')
-            # 找到内容
-            js_content_div = soup
-            # 移除style属性中的visibility: hidden;
-            if js_content_div is None:
-                return ""
-            js_content_div.attrs.pop('style', None)
-            # 找到所有的img标签
-            img_tags = js_content_div.find_all('img')
-            # 遍历每个img标签并修改属性，设置宽度为1080p
-            for img_tag in img_tags:
-                if 'src' in img_tag.attrs:
-                    img_tag['src'] = self.get_image_url(img_tag['src'])
-                if 'style' in img_tag.attrs:
-                    style = img_tag['style']
-                    # 使用正则表达式替换width属性
-                    style = re.sub(r'width\s*:\s*\d+\s*px', 'width: 100%', style)
-                    img_tag['style'] = style
-            return  js_content_div.prettify()
-        except Exception as e:
-            print_error(f"Proxy图片失败: {str(e)}")
-        return content
-   
-    def clean_article_content(self,html_content: str,mp_id:str=""):
-        from tools.htmltools import htmltools
-        html_content=self.fix_images(html_content)
-        # 应用过滤规则
-        try:
-            from apis.filter_rule import apply_filter_rules
-            print(f"[DB] 准备应用过滤规则: mp_id={mp_id}, content_html存在={html_content is not None}")
-            if html_content:
-                html_content = apply_filter_rules(html_content, mp_id)
-
-        except Exception as e:
-            print_warning(f"应用过滤规则失败: {e}")
-        if not cfg.get("gather.clean_html",False):
-            return html_content
-        
-        return htmltools.clean_html(str(html_content).strip(),
-                                remove_ids=
-                                ['content_bottom_interaction',
-                                 'activity-name',
-                                 'meta_content',
-                                 "js_article_bottom_bar",
-                                 "js_pc_weapp_code",
-                                 "js_novel_card",
-                                 "js_pc_qr_code"
-                                 ],
-                                 remove_selectors=[
-                                     "link",
-                                     "head",
-                                     "script"
-                                 ],
-                                 remove_attributes=[
-                                     {"name":"style","value":"display: none;"},
-                                     {"name":"style","value":"display:none;"},
-                                     {"name":"aria-hidden","value":"true"},
-                                 ],
-                                 remove_normal_tag=True
-                                 )
-   
 
 
-Web=WXArticleFetcher()
+# 导入 asyncio(用于文件顶部)
+import asyncio

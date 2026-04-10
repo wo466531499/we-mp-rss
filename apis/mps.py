@@ -72,7 +72,12 @@ def _ensure_featured_feed(session):
     return featured_feed
 
 
-def _run_add_featured_article_task(task_id: str, url: str):
+def _run_add_featured_article_task_wrapper(task_id: str, url: str):
+    """包装器:在线程中运行 async 函数"""
+    import asyncio
+    asyncio.run(_run_add_featured_article_task(task_id, url))
+
+async def _run_add_featured_article_task(task_id: str, url: str):
     session = DB.get_session()
     fetcher = None
     try:
@@ -90,7 +95,7 @@ def _run_add_featured_article_task(task_id: str, url: str):
             raise ValueError("请输入文章链接")
 
         fetcher = WXArticleFetcher()
-        info = fetcher.get_article_content(target_url)
+        info = await fetcher.get_article_content(target_url)
         if not info or info.get("fetch_error"):
             raise ValueError(info.get("fetch_error") or "文章抓取失败，请检查链接或登录状态")
 
@@ -297,7 +302,7 @@ async def add_featured_article(
             "message": "任务已创建"
         })
         threading.Thread(
-            target=_run_add_featured_article_task,
+            target=_run_add_featured_article_task_wrapper,
             args=(task_id, target_url),
             daemon=True
         ).start()
@@ -421,7 +426,7 @@ async def get_mp_by_article(
     current_user: dict = Depends(get_current_user_or_ak)
 ):
     try:
-        info =await WXArticleFetcher().async_get_article_content(url)
+        info = await WXArticleFetcher().get_article_content(url)
         
         if not info:
             raise HTTPException(
