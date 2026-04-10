@@ -246,8 +246,6 @@ class PlaywrightController:
             self.context = self.browser.new_context(**context_options) #type: ignore
             self.page = self.context.new_page()
             
-            if mobile_mode:
-                self.page.set_viewport_size({"width": 375, "height": 812})
 
             if dis_image:
                 self.context.route("**/*.{png,jpg,jpeg}", lambda route: route.abort())

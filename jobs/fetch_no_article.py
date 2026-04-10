@@ -51,7 +51,7 @@ def fetch_articles_without_content():
                     if article.status == DATA_STATUS.DELETED:
                         print_error(f"获取文章 {article.title} 内容已被发布者删除")
                     else:
-                        print_success(f"成功更新文章 {article.title} 的内容, mode={fetch_mode}")
+                        print_success(f"成功更新文章 {article.title} 的内容, mode={fetch_mode} url: http://127.0.0.1:8001/views/article/{article.id}")
                 else:
                     # 获取失败，恢复状态以便后续重试
                     article.status = original_status_map.get(article.id, DATA_STATUS.ACTIVE)
@@ -70,7 +70,8 @@ def fetch_articles_without_content():
         session.close()
 from core.task import TaskScheduler
 from core.queue import ContentTaskQueue
-scheduler=TaskScheduler()
+
+scheduler = TaskScheduler()
 def start_sync_content():
     """
     根据配置自动启动文章内容同步任务

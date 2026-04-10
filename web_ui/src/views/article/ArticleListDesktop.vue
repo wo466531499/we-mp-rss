@@ -497,17 +497,27 @@ const columns = computed(() => {
     {
       title: '文章标题',
       dataIndex: 'title',
+      width: 120,
       ellipsis: true,
-      render: ({ record }) => h('a', {
-        href: issourceUrl.value ? record.url || '#' : "/views/article/" + record.id,
-        title: record.title,
-        target: '_blank',
-        style: {
-          color: 'var(--color-text-1)',
-          textDecoration: record.is_read === 1 ? 'line-through' : 'none',
-          opacity: record.is_read === 1 ? 0.7 : 1
-        }
-      }, record.title)
+      tooltip: true,
+      render: ({ record }) => {
+        const title = record.title || ''
+        const displayTitle = title.length > 30 ? title.slice(0, 30) + '...' : title
+        return h('a', {
+          href: issourceUrl.value ? record.url || '#' : "/views/article/" + record.id,
+          title: record.title,
+          target: '_blank',
+          style: {
+            color: 'var(--color-text-1)',
+            textDecoration: record.is_read === 1 ? 'line-through' : 'none',
+            opacity: record.is_read === 1 ? 0.7 : 1,
+            display: 'block',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap'
+          }
+        }, displayTitle)
+      }
     },
     {
       title: '公众号',
