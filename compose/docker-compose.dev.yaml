@@ -27,6 +27,10 @@ services:
       DB: sqlite:///data/we_mp_rss.db
       REDIS_URL: redis://redis:6379/0
       PROXY_HTTP_URL: http://singbox:7890
+      # X Server 配置（默认启用 Xvfb）
+      ENABLE_XVFB: "true"
+      HEADLESS: "false"
+      DISPLAY: :99
     ports:
       - "8001:8001"
     volumes:

@@ -1258,7 +1258,19 @@ db0:keys={len(self.store.data)},expires={len(self.store.expires)}
         """启动服务"""
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server_socket.bind((self.host, self.port))
+        
+        # 检查端口是否可用
+        try:
+            self.server_socket.bind((self.host, self.port))
+        except OSError as e:
+            if e.errno == 98:  # Address already in use
+                print(f"[WARN] 端口 {self.port} 已被占用，内置 Redis 服务启动失败")
+                print(f"[INFO] 可能原因: 1) 另一个 Redis 实例正在运行  2) 之前的服务未正确关闭")
+                print(f"[INFO] 解决方案: 设置 REDIS_SERVER_ENABLED=False 禁用内置 Redis，或更换端口 REDIS_SERVER_PORT")
+                self.server_socket.close()
+                return
+            raise
+        
         self.server_socket.listen(100)
         self.server_socket.settimeout(1)
         self.running = True

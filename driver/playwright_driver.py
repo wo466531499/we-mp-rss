@@ -45,7 +45,7 @@ class PlaywrightController:
         - 支持移动端/桌面端模式切换
     """
 
-    def __init__(self, headless: bool = False,
+    def __init__(self, headless: bool = None,
                  browser_type: str = "webkit",
                  proxy_url: Optional[str] = "",
                  user_agent: Optional[str] = None,
@@ -55,14 +55,15 @@ class PlaywrightController:
         初始化异步控制器
 
         Args:
-            headless: 是否无头模式
+            headless: 是否无头模式（默认从环境变量HEADLESS读取，默认True）
             browser_type: 浏览器类型
             proxy_url: 代理URL
             user_agent: 用户代理（可选，优先使用用户指定值）
             debug: 调试模式
             mobile_mode: 是否为移动端模式
         """
-        self.headless = os.environ.get("HEADLESS", "false").lower() == "true" if headless is None else headless
+        # 默认使用 headless=True（适合Docker环境），可通过环境变量覆盖
+        self.headless = os.environ.get("HEADLESS", "true").lower() == "true" if headless is None else headless
         self.browser_type = browser_type
         self.proxy_url = proxy_url
         self.debug = debug
