@@ -157,7 +157,16 @@
           <div class="search-bar">
             <a-input-search class="search-input" v-model="searchText" placeholder="搜索文章标题" @search="handleSearch" @keyup.enter="handleSearch"
               allow-clear />
-            <a-checkbox class="favorite-filter" :model-value="onlyFavorite" @change="handleFavoriteFilterChange">仅显示已收藏</a-checkbox>
+            <a-select v-model="articleFilterType" class="article-filter-select" @change="handleArticleFilterChange" size="small" :style="{ width: '120px' }" multiple :max-tag-count="1" placeholder="筛选">
+              <a-option value="favorite">收藏</a-option>
+              <a-option value="has_content">有正文</a-option>
+              <a-option value="no_content">无正文</a-option>
+              <a-option value="updating">更新中</a-option>
+              <a-option value="pending">待处理</a-option>
+              <a-option value="completed">已完成</a-option>
+              <a-option value="failed">失败</a-option>
+              <a-option value="deleted">已删除</a-option>
+            </a-select>
             <a-dropdown trigger="click" position="bl">
               <a-button size="small">
                 <template #icon><icon-settings /></template>
@@ -359,7 +368,7 @@ const mpFilterType = ref('all') // 'active' | 'disabled' | 'all'
 const searchText = ref('')
 const filterStatus = ref('')
 const mpSearchText = ref('')
-const onlyFavorite = ref(false)
+const articleFilterType = ref<string[]>([]) // 多选筛选: 'favorite' | 'has_content' | 'no_content' | 'updating' | 'deleted'
 const featuredArticleModalVisible = ref(false)
 const featuredArticleUrl = ref('')
 
@@ -749,23 +758,39 @@ const handleMpClick = (mpId: string) => {
 const fetchArticles = async () => {
   loading.value = true
   try {
-    console.log('请求参数:', {
+    // 根据筛选类型构建请求参数
+    const params: any = {
       page: pagination.value.current - 1,
       pageSize: pagination.value.pageSize,
       search: searchText.value,
-      status: filterStatus.value,
-      mp_id: activeMpId.value,
-      only_favorite: onlyFavorite.value
-    })
+      mp_id: activeMpId.value
+    }
 
-    const res = await getArticles({
-      page: pagination.value.current - 1,
-      pageSize: pagination.value.pageSize,
-      search: searchText.value,
-      status: filterStatus.value,
-      mp_id: activeMpId.value,
-      only_favorite: onlyFavorite.value
-    })
+    // 根据筛选类型添加不同的参数（支持多选）
+    const filters = articleFilterType.value
+    if (filters.includes('favorite')) {
+      params.only_favorite = true
+    }
+    // has_content 和 no_content 互斥，优先取第一个
+    if (filters.includes('has_content') && !filters.includes('no_content')) {
+      params.has_content = true
+    } else if (filters.includes('no_content') && !filters.includes('has_content')) {
+      params.has_content = false
+    }
+    // 支持多状态筛选，用逗号分隔
+    const statusList: string[] = []
+    if (filters.includes('updating')) statusList.push('updating')
+    if (filters.includes('pending')) statusList.push('pending')
+    if (filters.includes('completed')) statusList.push('completed')
+    if (filters.includes('failed')) statusList.push('failed')
+    if (filters.includes('deleted')) statusList.push('deleted')
+    if (statusList.length > 0) {
+      params.status = statusList.join(',')
+    }
+
+    console.log('请求参数:', params)
+
+    const res = await getArticles(params)
 
     // 确保数据包含必要字段
     articles.value = (res.list || []).map(item => ({
@@ -815,8 +840,7 @@ const handleSearch = () => {
   fetchArticles()
 }
 
-const handleFavoriteFilterChange = (value: boolean | (string | number | boolean)[]) => {
-  onlyFavorite.value = Array.isArray(value) ? value.length > 0 : Boolean(value)
+const handleArticleFilterChange = () => {
   pagination.value.current = 1
   fetchArticles()
 }
@@ -937,7 +961,10 @@ const handleCleanOldArticlesPreview = async () => {
       dry_run: true
     })
     // http 拦截器已经返回了 data 部分
-    cleanOldArticlesPreviewData.value = res || {}
+    cleanOldArticlesPreviewData.value = {
+      ...res,
+      days: cleanOldArticlesForm.value.days // 确保days字段有值
+    }
     console.log('预览结果:', res)
     cleanOldArticlesPreviewVisible.value = true
   } catch (error) {
@@ -1439,7 +1466,8 @@ const toggleFavoriteStatus = async (record: any) => {
 
     Message.success(newFavoriteStatus ? '收藏成功' : '已取消收藏')
 
-    if (onlyFavorite.value && !newFavoriteStatus) {
+    // 如果当前筛选是"已收藏"且取消了收藏,需要刷新列表
+    if (articleFilterType.value === 'favorite' && !newFavoriteStatus) {
       pagination.value.current = 1
       fetchArticles()
     }
@@ -1499,12 +1527,28 @@ const toggleFavoriteStatus = async (record: any) => {
 
 .search-input {
   flex: 1;
-  min-width: 0;
-  max-width: calc(100% - 140px);
+  min-width: 200px;
 }
 
-.favorite-filter {
-  flex: 0 0 auto;
+.article-filter-select {
+  min-width: 70px;
+  flex-shrink: 0;
+}
+
+.article-filter-select:deep(.arco-select) {
+  width: 70px !important;
+  min-width: 70px !important;
+}
+
+.article-filter-select:deep(.arco-select-view) {
+  width: 70px !important;
+  min-width: 70px !important;
+  padding: 0 8px !important;
+}
+
+.article-filter-select:deep(.arco-select-view-value) {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

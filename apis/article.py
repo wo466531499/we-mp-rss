@@ -213,16 +213,53 @@ async def clean_old_articles(
         # 获取预览文章（最多100条）
         articles_to_delete = query.limit(100).all()
         
+        # 调试：打印一些文章的时间信息
+        if articles_to_delete:
+            print_info(f"示例文章时间信息:")
+            for i, article in enumerate(articles_to_delete[:5]):
+                try:
+                    if article.publish_time:
+                        # 检查时间戳是否合理（秒级 vs 毫秒级）
+                        if article.publish_time > 10000000000:  # 毫秒级时间戳
+                            publish_date = datetime.fromtimestamp(article.publish_time / 1000)
+                            print_info(f"  [{i}] 毫秒时间戳: {article.publish_time} -> {publish_date}")
+                        else:
+                            publish_date = datetime.fromtimestamp(article.publish_time)
+                            print_info(f"  [{i}] 秒时间戳: {article.publish_time} -> {publish_date}")
+                    else:
+                        print_info(f"  [{i}] publish_time 为空")
+                except Exception as e:
+                    print_error(f"  [{i}] 时间解析失败: {article.publish_time}, 错误: {e}")
+        
         # 预览信息
         preview = []
         for article in articles_to_delete[:20]:  # 最多显示20条预览
-            preview.append({
-                "id": article.id,
-                "title": article.title,
-                "mp_id": article.mp_id,
-                "publish_time": article.publish_time,
-                "publish_date": datetime.fromtimestamp(article.publish_time).strftime("%Y-%m-%d %H:%M:%S") if article.publish_time else None
-            })
+            try:
+                if article.publish_time:
+                    # 处理毫秒级时间戳
+                    if article.publish_time > 10000000000:
+                        publish_date = datetime.fromtimestamp(article.publish_time / 1000).strftime("%Y-%m-%d %H:%M:%S")
+                    else:
+                        publish_date = datetime.fromtimestamp(article.publish_time).strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    publish_date = None
+                    
+                preview.append({
+                    "id": article.id,
+                    "title": article.title,
+                    "mp_id": article.mp_id,
+                    "publish_time": article.publish_time,
+                    "publish_date": publish_date
+                })
+            except Exception as e:
+                print_error(f"预览文章 {article.id} 时间解析失败: {e}")
+                preview.append({
+                    "id": article.id,
+                    "title": article.title,
+                    "mp_id": article.mp_id,
+                    "publish_time": article.publish_time,
+                    "publish_date": None
+                })
         
         if dry_run:
             # 只预览，不实际删除
@@ -233,7 +270,8 @@ async def clean_old_articles(
                 "cutoff_timestamp": cutoff_timestamp,
                 "preview_count": len(preview),
                 "preview": preview,
-                "dry_run": True
+                "dry_run": True,
+                "days": days
             })
         
         # 实际删除
@@ -390,17 +428,28 @@ async def clean_duplicate(
 async def get_articles(
     offset: int = Query(0, ge=0),
     limit: int = Query(5, ge=1, le=100),
-    status: str = Query(None),
+    status: str = Query(None, description="文章状态，多个用逗号分隔，如: updating,deleted"),
     search: str = Query(None),
     mp_id: str = Query(None),
     only_favorite: bool = Query(False),
-    has_content:bool=Query(False),
+    has_content: bool = Query(None, description="是否有正文: true=有, false=无, 不传=全部"),
     current_user: dict = Depends(get_current_user_or_ak)
 ):
     session = DB.get_session()
     try:
         from sqlalchemy import case, func
-        
+
+        # 状态字符串到状态码的映射
+        status_map = {
+            'deleted': DATA_STATUS.DELETED,
+            'updating': DATA_STATUS.FETCHING,
+            'active': DATA_STATUS.ACTIVE,
+            'inactive': DATA_STATUS.INACTIVE,
+            'pending': DATA_STATUS.PENDING,
+            'completed': DATA_STATUS.COMPLETED,
+            'failed': DATA_STATUS.FAILED,
+        }
+
         # 构建查询条件 - 使用 ArticleBase 并通过 case 表达式判断是否有正文
         # 避免加载大量 content 数据
         query = session.query(
@@ -410,14 +459,27 @@ async def get_articles(
                 else_=0
             ).label('has_content')
         )
+        # 支持多个状态值（逗号分隔），将字符串映射为状态码
         if status:
-            query = query.filter(ArticleBase.status == status)
+            status_list = [s.strip() for s in status.split(',') if s.strip()]
+            status_codes = [status_map.get(s) for s in status_list if status_map.get(s) is not None]
+            if status_codes:
+                query = query.filter(ArticleBase.status.in_(status_codes))
+            else:
+                # 无有效状态码时，默认排除已删除
+                query = query.filter(ArticleBase.status != DATA_STATUS.DELETED)
         else:
             query = query.filter(ArticleBase.status != DATA_STATUS.DELETED)
         if mp_id:
             query = query.filter(ArticleBase.mp_id == mp_id)
         if only_favorite:
             query = query.filter(ArticleBase.is_favorite == 1)
+        # 支持 has_content 参数：true=有正文，false=无正文，None=不筛选
+        if has_content is not None:
+            if has_content:
+                query = query.filter((Article.content.isnot(None)) & (Article.content != ''))
+            else:
+                query = query.filter((Article.content.is_(None)) | (Article.content == ''))
         if search:
             query = query.filter(
                format_search_kw(search)

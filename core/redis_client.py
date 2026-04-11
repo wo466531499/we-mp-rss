@@ -1,4 +1,5 @@
 """Redis客户端工具类"""
+import json
 import redis
 from typing import Optional, Dict, Any
 from datetime import datetime
