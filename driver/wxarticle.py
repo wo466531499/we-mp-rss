@@ -549,6 +549,7 @@ class Web:
         1. 使用 data-src 属性（懒加载）
         2. URL 来自 mmbiz.qpic.cn 等微信 CDN
         3. 可能需要正确的 referer 才能访问
+        4. 背景图片使用 CSS background-image 或 background 属性
         
         Args:
             content: HTML 内容
@@ -561,6 +562,7 @@ class Web:
             
         try:
             soup = BeautifulSoup(content, 'html.parser')
+            from urllib.parse import quote
             
             # 处理所有图片标签
             for img in soup.find_all('img'):
@@ -569,7 +571,6 @@ class Web:
                 
                 if img_url and img_url.startswith(('http://', 'https://')):
                     # 将图片URL转换为代理URL
-                    from urllib.parse import quote
                     encoded_url = quote(img_url, safe='')
                     proxy_url = f"/static/res/logo/{encoded_url}"
                     
@@ -584,6 +585,33 @@ class Web:
                     for attr in ['data-type', 'data-ratio', 'data-w']:
                         if img.has_attr(attr):
                             del img[attr]
+            
+            # 处理所有带有 style 属性的元素（背景图片）
+            for element in soup.find_all(attrs={'style': True}):
+                style = element.get('style', '')
+                if not style:
+                    continue
+                
+                # 匹配 background-image: url(...) 或 background: url(...)
+                # 支持单引号、双引号和无引号的 URL
+                bg_pattern = r'(background-image\s*:\s*url\(|background\s*:[^;]*url\()([\'"]?)(https?://[^\'")\s]+)([\'"]?)\)'
+                
+                def replace_bg_url(match):
+                    prefix = match.group(1)  # background-image: url( 或 background: ... url(
+                    quote1 = match.group(2)  # 开始引号
+                    img_url = match.group(3)  # 图片 URL
+                    quote2 = match.group(4)  # 结束引号
+                    
+                    # 转换为代理 URL
+                    encoded_url = quote(img_url, safe='')
+                    proxy_url = f"/static/res/logo/{encoded_url}"
+                    
+                    return f"{prefix}{quote1}{proxy_url}{quote2})"
+                
+                new_style = re.sub(bg_pattern, replace_bg_url, style)
+                
+                if new_style != style:
+                    element['style'] = new_style
             
             return str(soup)
             

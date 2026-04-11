@@ -157,14 +157,12 @@
           <div class="search-bar">
             <a-input-search class="search-input" v-model="searchText" placeholder="搜索文章标题" @search="handleSearch" @keyup.enter="handleSearch"
               allow-clear />
-            <a-select v-model="articleFilterType" class="article-filter-select" @change="handleArticleFilterChange" size="small" :style="{ width: '120px' }" multiple :max-tag-count="1" placeholder="筛选">
+            <a-select v-model="articleFilterType" class="article-filter-select" @change="handleArticleFilterChange" size="small" :style="{ width: '100px' }" placeholder="筛选">
+              <a-option value="">全部</a-option>
               <a-option value="favorite">收藏</a-option>
               <a-option value="has_content">有正文</a-option>
               <a-option value="no_content">无正文</a-option>
               <a-option value="updating">更新中</a-option>
-              <a-option value="pending">待处理</a-option>
-              <a-option value="completed">已完成</a-option>
-              <a-option value="failed">失败</a-option>
               <a-option value="deleted">已删除</a-option>
             </a-select>
             <a-dropdown trigger="click" position="bl">
@@ -368,7 +366,7 @@ const mpFilterType = ref('all') // 'active' | 'disabled' | 'all'
 const searchText = ref('')
 const filterStatus = ref('')
 const mpSearchText = ref('')
-const articleFilterType = ref<string[]>([]) // 多选筛选: 'favorite' | 'has_content' | 'no_content' | 'updating' | 'deleted'
+const articleFilterType = ref('') // 单选筛选: 'favorite' | 'has_content' | 'no_content' | 'updating' | 'deleted'
 const featuredArticleModalVisible = ref(false)
 const featuredArticleUrl = ref('')
 
@@ -766,26 +764,18 @@ const fetchArticles = async () => {
       mp_id: activeMpId.value
     }
 
-    // 根据筛选类型添加不同的参数（支持多选）
-    const filters = articleFilterType.value
-    if (filters.includes('favorite')) {
+    // 根据筛选类型添加不同的参数（单选）
+    const filter = articleFilterType.value
+    if (filter === 'favorite') {
       params.only_favorite = true
-    }
-    // has_content 和 no_content 互斥，优先取第一个
-    if (filters.includes('has_content') && !filters.includes('no_content')) {
+    } else if (filter === 'has_content') {
       params.has_content = true
-    } else if (filters.includes('no_content') && !filters.includes('has_content')) {
+    } else if (filter === 'no_content') {
       params.has_content = false
-    }
-    // 支持多状态筛选，用逗号分隔
-    const statusList: string[] = []
-    if (filters.includes('updating')) statusList.push('updating')
-    if (filters.includes('pending')) statusList.push('pending')
-    if (filters.includes('completed')) statusList.push('completed')
-    if (filters.includes('failed')) statusList.push('failed')
-    if (filters.includes('deleted')) statusList.push('deleted')
-    if (statusList.length > 0) {
-      params.status = statusList.join(',')
+    } else if (filter === 'updating') {
+      params.status = 'updating'
+    } else if (filter === 'deleted') {
+      params.status = 'deleted'
     }
 
     console.log('请求参数:', params)
