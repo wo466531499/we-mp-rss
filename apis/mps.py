@@ -237,7 +237,7 @@ async def get_mps(
             query = query.filter(Feed.mp_name.ilike(f"%{kw}%"))
         if status is not None:
             query = query.filter(Feed.status == status)
-        total = query.count() + 1
+        total = query.count()
         mps = query.order_by(Feed.created_at.desc()).limit(limit).offset(offset).all()
         mps_list = [{
                 "id": mp.id,
@@ -247,9 +247,6 @@ async def get_mps(
                 "status": mp.status,
                 "created_at": mp.created_at.isoformat()
             } for mp in mps]
-        # 只在筛选全部且无搜索关键词时添加精选文章
-        if offset == 0 and status is None and not kw:
-            mps_list.insert(0, build_featured_mp_item())
         return success_response({
             "list": mps_list,
             "page": {

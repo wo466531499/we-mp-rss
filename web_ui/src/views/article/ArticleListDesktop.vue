@@ -43,11 +43,11 @@
               <template #item="{ item, index }">
                 <a-popover trigger="hover" position="right" :content-style="{ padding: '12px', minWidth: '200px', maxWidth: '300px' }">
                   <a-list-item @click="handleMpClick(item.id)" :class="{ 'active-mp': activeMpId === item.id }"
-                    style="padding: 9px 8px; cursor: pointer; display: flex; align-items: center; justify-content: space-between;">
+                    style="padding: 8px 6px; cursor: pointer; display: flex; align-items: center; justify-content: space-between;">
                     <div style="display: flex; align-items: center;">
                       <img :src="Avatar(item.avatar)" width="40" style="float:left;margin-right:1rem;" />
                       <a-typography-text strong style="line-height:32px;" :style="{ opacity: item.status === 0 ? 0.5 : 1 }">
-                        {{ (item.name || item.mp_name).length > 8 ? (item.name || item.mp_name).substring(0, 8) + '...' : (item.name || item.mp_name) }}
+                        {{ (item.name || item.mp_name).length > 12 ? (item.name || item.mp_name).substring(0, 12) + '...' : (item.name || item.mp_name) }}
                       </a-typography-text>
                     </div>
                   </a-list-item>
@@ -394,12 +394,12 @@ const featuredArticleUrl = ref('')
 
 const pagination = ref({
   current: 1,
-  pageSize: 10,
+  pageSize: 8,
   total: 0,
   showTotal: true,
   showJumper: true,
   showPageSize: true,
-  pageSizeOptions: [10, 20, 50, 100]
+  pageSizeOptions: [8,10, 20, 50, 100]
 })
 
 const statusTextMap = {
@@ -1248,14 +1248,10 @@ const fetchMpList = async () => {
     }
     // 'all' 时不传 status 参数
 
-    // 选择"全部"时，请求少2条（因为会添加"全部"和"精选文章"两个选项）
-    const adjustedPageSize = mpFilterType.value === 'all' && !mpSearchText.value
-      ? mpPagination.value.pageSize - 2
-      : mpPagination.value.pageSize
 
     const res = await getSubscriptions({
       page: mpPagination.value.current - 1,
-      pageSize: adjustedPageSize,
+      pageSize: mpPagination.value.pageSize,
       kw: mpSearchText.value,
       status: statusParam
     })
