@@ -521,7 +521,18 @@ class Web:
                     if style_value:
                         img_tag['style'] = style_value
 
-                # 2. 处理背景类资源 (background-image, background等)
+                # 2. 处理section、p、span标签，只保留style属性
+                for tag_name in ['section', 'p', 'span']:
+                    tags = js_content_div.find_all(tag_name)
+                    for tag in tags:
+                        style_value = tag.get('style', '')
+                        # 清除所有属性
+                        tag.attrs = {}
+                        # 只保留style属性
+                        if style_value:
+                            tag['style'] = style_value
+
+                # 3. 处理背景类资源 (background-image, background等)
                 # 查找所有带有style属性的元素
                 all_elements = js_content_div.find_all(attrs={'style': True})
 
