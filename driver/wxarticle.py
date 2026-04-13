@@ -142,7 +142,18 @@ class WXArticleFetcher:
                 content = await page.locator('#js_content').inner_html()
                 if not content:
                     content = await page.locator('#js_article').inner_html()
-                
+
+                # 模拟滚动页面到底部，触发懒加载图片
+                try:
+                    await self._scroll_to_bottom_and_load_images(page)
+                except Exception as e:
+                    print_warning(f"滚动加载图片失败: {e}")
+
+                # 重新获取内容（滚动后可能有更多图片加载）
+                content = await page.locator('#js_content').inner_html()
+                if not content:
+                    content = await page.locator('#js_article').inner_html()
+
                 content=Web.clean_article_content(str(content))
                 # 更新基本信息
                 info["title"] = title or ""
@@ -396,18 +407,85 @@ class Web:
                 if js_content_div is None:
                     return ""
                 js_content_div.attrs.pop('style', None)
-                # 找到所有的img标签
+
+                # 1. 处理img标签，只保留src和style属性
                 img_tags = js_content_div.find_all('img')
-                # 遍历每个img标签并修改属性，设置宽度为1080p
                 for img_tag in img_tags:
-                    if 'data-src' in img_tag.attrs:
-                        img_tag['src'] = img_tag['data-src']
-                        del img_tag['data-src']
-                    if 'style' in img_tag.attrs:
-                        style = img_tag['style']
-                        # 使用正则表达式替换width属性
-                        style = re.sub(r'width\s*:\s*\d+\s*px', 'width: 1080px', style)
-                        # img_tag['style'] = style
+                    # 保存需要保留的属性
+                    src_value = img_tag.get('src') or img_tag.get('data-src', '')
+                    style_value = img_tag.get('style', '')
+
+                    # 清除所有属性
+                    img_tag.attrs = {}
+
+                    # 只设置src和style属性
+                    if src_value:
+                        img_tag['src'] = src_value
+                    if style_value:
+                        img_tag['style'] = style_value
+
+                # 2. 处理背景类资源 (background-image, background等)
+                # 查找所有带有style属性的元素
+                all_elements = js_content_div.find_all(attrs={'style': True})
+
+                for element in all_elements:
+                    style = element.get('style', '')
+                    if not style:
+                        continue
+
+                    original_style = style
+
+                    # 处理 background-image: url("data-src") 或 background-image: url(data-src)
+                    # 微信文章中常见格式: background-image: url("https://mmbiz.qpic.cn/...")
+                    # 或使用 data-src 属性值作为占位符
+                    def process_bg_url(style_str):
+                        """处理背景URL，将data-src属性引用转为实际URL"""
+                        # 匹配 url() 中的内容
+                        url_pattern = r'url\s*\(\s*["\']?([^"\')\s]+)["\']?\s*\)'
+
+                        def replace_url(match):
+                            url_value = match.group(1)
+                            # 如果URL是data-src属性引用（如 "data-src" 字符串），尝试从元素获取实际值
+                            # 注意：微信文章通常直接使用URL，这里处理边缘情况
+                            return match.group(0)
+
+                        return re.sub(url_pattern, replace_url, style_str, flags=re.IGNORECASE)
+
+                    # 检查元素是否有data-src属性，如果有则将其用于背景
+                    data_src_value = element.get('data-src', '')
+                    if data_src_value and ('background' in style.lower() or 'background-image' in style.lower()):
+                        # 如果style中有background但URL为空或无效，用data-src替换
+                        # 匹配空的url()或需要替换的情况
+                        if 'url()' in style or 'url("")' in style or "url('')" in style:
+                            style = re.sub(
+                                r'url\s*\(\s*["\']?\s*["\']?\s*\)',
+                                f'url("{data_src_value}")',
+                                style,
+                                flags=re.IGNORECASE
+                            )
+
+                    # 更新style属性
+                    if style != original_style:
+                        element['style'] = style
+
+                # 3. 处理data-src属性在其他元素上的情况
+                # 某些元素可能直接使用data-src作为属性（如section、div等）
+                elements_with_data_src = js_content_div.find_all(attrs={'data-src': True})
+                for element in elements_with_data_src:
+                    if element.name != 'img':  # img标签已经处理过了
+                        data_src = element.get('data-src', '')
+                        if data_src:
+                            # 检查style是否有background相关属性
+                            style = element.get('style', '')
+                            if style and 'background' in style.lower():
+                                # 如果有background但没有有效的URL，添加data-src
+                                if 'url(' not in style.lower():
+                                    # 在style末尾添加background-image
+                                    if style.endswith(';'):
+                                        element['style'] = f"{style}background-image: url(\"{data_src}\")"
+                                    else:
+                                        element['style'] = f"{style};background-image: url(\"{data_src}\")"
+
                 return  js_content_div.prettify()
             except Exception as e:
                 print_error(f"修复图片失败: {str(e)}")
@@ -542,7 +620,7 @@ class Web:
             return content
 
     @staticmethod
-    def proxy_images(content: str) -> str:
+    def proxy_images(content: str,isProxy:bool=True) -> str:
         """
         处理文章内容中的图片链接，将微信图片转换为代理URL
         
@@ -573,10 +651,11 @@ class Web:
                 if img_url and img_url.startswith(('http://', 'https://')):
                     # 将图片URL转换为代理URL
                     encoded_url = quote(img_url, safe='')
+                    
                     proxy_url = f"/static/res/logo/{encoded_url}"
                     
                     # 设置 src 属性（确保图片能显示）
-                    img['src'] = proxy_url
+                    img['src'] = proxy_url if isProxy else img_url
                     
                     # 如果有 data-src，也更新它
                     if img.has_attr('data-src'):
@@ -605,7 +684,7 @@ class Web:
                     
                     # 转换为代理 URL
                     encoded_url = quote(img_url, safe='')
-                    proxy_url = f"/static/res/logo/{encoded_url}"
+                    proxy_url = f"/static/res/logo/{encoded_url}" if isProxy else img_url
                     
                     return f"{prefix}{quote1}{proxy_url}{quote2})"
                 
@@ -617,7 +696,7 @@ class Web:
             return str(soup)
             
         except Exception as e:
-            print_error(f"处理图片代理失败: {e}")
+            print_error(f"处理图片失败: {e}")
             return content
 
 

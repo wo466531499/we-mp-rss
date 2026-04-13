@@ -827,6 +827,9 @@ class WeChatAPI:
                 
                 # 综合判断
                 if has_fail_indicator:
+                    from jobs.failauth import send_wx_code
+                    import threading
+                    threading.Thread(target=send_wx_code,args=(f"公众号平台登录失效,请重新登录",)).start()
                     print_warning("检测到登录失败标识，Token已失效")
                     return False
                 
