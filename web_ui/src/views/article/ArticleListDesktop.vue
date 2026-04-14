@@ -57,7 +57,7 @@
                         <img :src="Avatar(item.avatar)" width="32" style="border-radius: 4px;" />
                         <div style="flex: 1;">
                           <div style="font-weight: 600; font-size: 14px;">{{ item.name || item.mp_name }}</div>
-                          <div style="font-size: 12px; color: var(--color-text-3);">ID: {{ item.id }}</div>
+                          <div style="font-size: 12px; color: var(--color-text-3);" v-if="item.id">ID: {{ item.id }}</div>
                         </div>
                       </div>
                       <div v-if="item.mp_intro" style="font-size: 12px; color: var(--color-text-2); line-height: 1.5;">
@@ -516,31 +516,6 @@ const toggleColumn = (key: string, checked: boolean) => {
 const columns = computed(() => {
   const allColumns = [
     {
-      title: '已阅',
-      dataIndex: 'is_read',
-      width: 60,
-      render: ({ record }) => {
-        const isRead = record.is_read === 1;
-        return h('div', {
-          style: {
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            color: isRead ? '#52c41a' : 'var(--color-text-3)'
-          },
-          onClick: () => toggleReadStatus(record)
-        }, [
-          h(isRead ? IconCheck : IconClose, {
-            style: { marginRight: '2px' }
-          }),
-          h('span', {
-            style: { fontSize: '12px' }
-          }, isRead ? '' : '')
-        ]);
-      }
-    },
-    {
       title: '题图',
       dataIndex: 'pic_url',
       width: 80,
@@ -573,6 +548,31 @@ const columns = computed(() => {
             }
           })
         })
+      }
+    },
+       {
+      title: '已阅',
+      dataIndex: 'is_read',
+      width: 10,
+      render: ({ record }) => {
+        const isRead = record.is_read === 1;
+        return h('div', {
+          style: {
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            color: isRead ? '#52c41a' : 'var(--color-text-3)'
+          },
+          onClick: () => toggleReadStatus(record)
+        }, [
+          h(isRead ? IconCheck : IconClose, {
+            style: { marginRight: '2px' }
+          }),
+          h('span', {
+            style: { fontSize: '12px' }
+          }, isRead ? '' : '')
+        ]);
       }
     },
     {
@@ -674,7 +674,7 @@ const columns = computed(() => {
     {
       title: '发布时间',
       dataIndex: 'publish_time',
-      width: 130,
+      width: 140,
       render: ({ record }) => h('span',
         { style: { color: 'rgb(var(--color-text-3))', fontSize: '12px' } },
         formatTimestamp(record.publish_time)
