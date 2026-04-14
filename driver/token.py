@@ -68,6 +68,8 @@ def get(key:str,default:str="")->str:
     value = token_data.get(key, default)
     if isinstance(value, dict):
         return json.dumps(value)
+    if value=="None":
+        return ''
     return str(value) if value is not None else default
 
 
