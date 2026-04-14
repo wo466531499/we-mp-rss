@@ -510,6 +510,8 @@ class Web:
                 for img_tag in img_tags:
                     # 保存需要保留的属性
                     src_value = img_tag.get('src') or img_tag.get('data-src', '')
+                    if "data:image" in src_value and src_value!=img_tag.get('data-src','') :
+                        src_value = img_tag.get('data-src', '')
                     style_value = img_tag.get('style', '')
 
                     # 清除所有属性
