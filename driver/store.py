@@ -54,12 +54,12 @@ class KeyStore:
         """过滤 cookie items"""
         new_items = []
         for item in items:
-            if "domain" in item:
-                del item["domain"]
-            # if item['name'] == "_clck":
-            #     continue
-            # if item['name'] == "token":
-            #     continue
+            # if "domain" in item:
+                # del item["domain"]
+            if item['name'] == "_clck":
+                continue
+            if item['name'] == "token":
+                continue
             new_items.append(item)
         return new_items
 
