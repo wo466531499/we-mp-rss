@@ -24,3 +24,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.TOKEN }}
+          tag: ${{ github.event.inputs.tag || github.ref_name }}
