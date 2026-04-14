@@ -259,7 +259,7 @@ defineExpose({
     </div>
     <a-space direction="vertical" fill>
       <a-typography-text strong>表达式预览: {{ cronExpression }}</a-typography-text>
-      <a-typography-text type="secondary">解释: {{ cornDescription }}</a-typography-text>
+      <a-typography-text type="secondary" style="color:green;">解释: {{ cornDescription }}</a-typography-text>
 
       <div class="examples">
         <a-typography-text strong>常用示例:</a-typography-text>
