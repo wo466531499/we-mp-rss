@@ -31,10 +31,10 @@ if [ "$HEADLESS" != "true" ] || [ "$ENABLE_XVFB" = "true" ]; then
     packages+=("xvfb" "x11-utils" "libgtk-3-0" "libnotify4" "libnss3" "libxss1" "libxtst6" "libasound2" "libgbm1")
 fi
 
-if [ "$EXPORT_PDF" = "True" ]; then
-    echo "添加libreoffice依赖包..."
-    packages+=("fonts-noto-cjk" "libreoffice")
-fi
+# if [ "$EXPORT_PDF" = "True" ]; then
+#     echo "添加libreoffice依赖包..."
+#     packages+=("fonts-noto-cjk" "libreoffice")
+# fi
 
 echo "检查依赖包安装状态..."
 for package in "${packages[@]}"; do
